@@ -170,7 +170,7 @@ jobs:
           args: --release --out dist
           maturin-version: ${{ env.MATURIN_VERSION }}
 
-      - uses: uraimo/run-on-arch-action@cd5f294c3b7be88bc5b708fe25e1af36818f9ead
+      - uses: uraimo/run-on-arch-action@d9e985ee32020b12e9cafe5b7d52cf0122bb7609
         if: matrix.target != 'ppc64'
         name: Install built wheel
         with:
