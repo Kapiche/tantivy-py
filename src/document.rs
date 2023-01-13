@@ -9,7 +9,7 @@ use pyo3::{
     },
 };
 
-use chrono::{offset::TimeZone, Datelike, Timelike, Utc};
+use time::{offset::TimeZone, Datelike, Timelike, Utc};
 
 use tantivy as tv;
 
