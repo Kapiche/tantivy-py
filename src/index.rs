@@ -21,7 +21,6 @@ use tantivy::{
     schema::{NamedFieldDocument, Term, Value},
     tokenizer::{
         Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
-        TextAnalyzer,
         StopWordFilter, TextAnalyzer, WhitespaceTokenizer,
     },
 };
