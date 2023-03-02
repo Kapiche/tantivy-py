@@ -23,8 +23,7 @@ pub struct Stats {
     pub hits: Vec<(u64, u64, u64, f32)>,
 }
 
-impl Stats {
-}
+impl Stats {}
 
 pub struct StatsCollector {
     document_id_field_name: String,
@@ -41,9 +40,16 @@ impl StatsCollector {
         }
     }
 
-    fn get_fast_field_reader( &self, field: &str, segment_reader: &SegmentReader,) -> tantivy::Result<Arc<dyn Column>> {
+    fn get_fast_field_reader(
+        &self,
+        field: &str,
+        segment_reader: &SegmentReader,
+    ) -> tantivy::Result<Arc<dyn Column>> {
         // Look up the correct `Field` instance from the string name
-        let f = segment_reader.schema().get_field(field).expect("Given field doesn't exist.");
+        let f = segment_reader
+            .schema()
+            .get_field(field)
+            .expect("Given field doesn't exist.");
         segment_reader.fast_fields().u64(f)
     }
 }
@@ -59,10 +65,16 @@ impl Collector for StatsCollector {
         segment_reader: &SegmentReader,
     ) -> tantivy::Result<StatsSegmentCollector> {
         // Create fastfield readers for document_id and frame_id.
-        let fast_field_reader_document_id = self.get_fast_field_reader(&self.document_id_field_name, segment_reader)?;
-        let fast_field_reader_frame_id = self.get_fast_field_reader(&self.frame_id_field_name, segment_reader)?;
+        let fast_field_reader_document_id = self.get_fast_field_reader(
+            &self.document_id_field_name,
+            segment_reader,
+        )?;
+        let fast_field_reader_frame_id = self
+            .get_fast_field_reader(&self.frame_id_field_name, segment_reader)?;
         let fast_field_reader_sentence_id = self.get_fast_field_reader(
-            &self.sentence_id_field_name, segment_reader)?;
+            &self.sentence_id_field_name,
+            segment_reader,
+        )?;
         Ok(StatsSegmentCollector {
             fast_field_reader_document_id,
             fast_field_reader_frame_id,
@@ -75,7 +87,10 @@ impl Collector for StatsCollector {
         true
     }
 
-    fn merge_fruits(&self, segment_stats: Vec<Option<Stats>>) -> tantivy::Result<Option<Stats>> {
+    fn merge_fruits(
+        &self,
+        segment_stats: Vec<Option<Stats>>,
+    ) -> tantivy::Result<Option<Stats>> {
         let mut stats = Stats::default();
         for segment_stats in segment_stats.into_iter().flatten() {
             stats.hits.extend(segment_stats.hits);
@@ -120,10 +135,13 @@ fn main() -> tantivy::Result<()> {
     // We'll assume a fictional index containing
     // products, and with a name, a description, and a price.
     let product_name = schema_builder.add_text_field("name", TEXT);
-    let product_description = schema_builder.add_text_field("description", TEXT);
+    let product_description =
+        schema_builder.add_text_field("description", TEXT);
     let price = schema_builder.add_u64_field("price", INDEXED | FAST);
-    let document_id = schema_builder.add_u64_field("document_id__", STORED | INDEXED | FAST);
-    let frame_id = schema_builder.add_u64_field("frame_id__", STORED | INDEXED | FAST);
+    let document_id =
+        schema_builder.add_u64_field("document_id__", STORED | INDEXED | FAST);
+    let frame_id =
+        schema_builder.add_u64_field("frame_id__", STORED | INDEXED | FAST);
     let schema = schema_builder.build();
 
     // # Indexing documents
@@ -181,7 +199,8 @@ fn main() -> tantivy::Result<()> {
 
     let reader = index.reader()?;
     let searcher = reader.searcher();
-    let query_parser = QueryParser::for_index(&index, vec![product_name, product_description]);
+    let query_parser =
+        QueryParser::for_index(&index, vec![product_name, product_description]);
 
     // here we want to search for `broom` and use `StatsCollector` on the hits.
     let query = query_parser.parse_query("broom")?;
