@@ -60,30 +60,22 @@ impl SearchResult {
 
     #[getter]
     fn unique_docs(&self, py: Python) -> PyResult<BTreeSet<u64>> {
-        let s = BTreeSet::from_iter(
-            self.hits
-                .iter()
-                .map(|(d, f, s, score)| *d)
-        );
+        let s =
+            BTreeSet::from_iter(self.hits.iter().map(|(d, f, s, score)| *d));
         Ok(s)
     }
 
     #[getter]
     fn unique_frames(&self, py: Python) -> PyResult<BTreeSet<u64>> {
-        let s = BTreeSet::from_iter(
-            self.hits
-                .iter()
-                .map(|(d, f, s, score)| *f)
-        );
+        let s =
+            BTreeSet::from_iter(self.hits.iter().map(|(d, f, s, score)| *f));
         Ok(s)
     }
 
     #[getter]
     fn unique_docs_frames(&self, py: Python) -> PyResult<BTreeSet<(u64, u64)>> {
         let s = BTreeSet::from_iter(
-            self.hits
-                .iter()
-                .map(|(d, f, s, score)| (*d, *f))
+            self.hits.iter().map(|(d, f, s, score)| (*d, *f)),
         );
         Ok(s)
     }
@@ -151,13 +143,9 @@ impl StatSearcher {
         let search_result = match ret {
             Ok(result) => {
                 if let Some(stats) = result {
-                    SearchResult {
-                        hits: stats.hits,
-                    }
+                    SearchResult { hits: stats.hits }
                 } else {
-                    SearchResult {
-                        hits: vec![],
-                    }
+                    SearchResult { hits: vec![] }
                 }
             }
             Err(e) => return Err(PyValueError::new_err(e.to_string())),
