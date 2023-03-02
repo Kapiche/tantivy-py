@@ -13,6 +13,7 @@ use crate::{
     query::Query,
     schema::Schema,
     searcher::Searcher,
+    searcher_frame_document::StatSearcher,
     to_pyerr,
 };
 use tantivy as tv;
@@ -307,6 +308,12 @@ impl Index {
     /// for ever.
     fn searcher(&self, py: Python) -> Searcher {
         Searcher {
+            inner: py.allow_threads(|| self.reader.searcher()),
+        }
+    }
+
+    fn stat_searcher(&self, py: Python) -> StatSearcher {
+        StatSearcher {
             inner: py.allow_threads(|| self.reader.searcher()),
         }
     }
