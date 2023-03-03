@@ -1,13 +1,10 @@
 #![allow(clippy::new_ret_no_self)]
 
-use futures::StreamExt;
 use std::collections::BTreeSet;
 use std::iter::FromIterator;
-use std::os::linux::raw::stat;
 
 use crate::more_collectors::StatsCollector;
 use crate::{document::Document, query::Query, to_pyerr};
-use pyo3::exceptions::PyTypeError;
 use pyo3::types::PySet;
 use pyo3::{exceptions::PyValueError, prelude::*};
 use tantivy as tv;
@@ -87,16 +84,10 @@ impl StatSearcher {
     ///
     /// Args:
     ///     query (Query): The query that will be used for the search.
-    ///     limit (int, optional): The maximum number of search results to
-    ///         return. Defaults to 10.
-    ///     count (bool, optional): Should the number of documents that match
-    ///         the query be returned as well. Defaults to true.
-    ///     order_by_field (Field, optional): A schema field that the results
-    ///         should be ordered by. The field must be declared as a fast field
-    ///         when building the schema. Note, this only works for unsigned
-    ///         fields.
-    ///     offset (Field, optional): The offset from which the results have
-    ///         to be returned.
+    ///     allowed_frame_ids: A set of frame ids. Only frame ids that are part of this
+    ///         set will be retured as part of the search result. Any other match will be
+    ///         discarded.
+    ///         To include all results provide an empty set.
     ///
     /// Returns `SearchResult` object.
     ///

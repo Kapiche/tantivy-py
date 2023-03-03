@@ -1,7 +1,5 @@
 #![allow(clippy::new_ret_no_self)]
 
-use std::collections::HashMap;
-
 use pyo3::{exceptions, prelude::*, types::PyAny};
 
 use crate::{
