@@ -3,9 +3,9 @@ name: Test & Release
 on:
   release:
     types: [published]
-  pull_request:
-    branches:
-      - master
+  # pull_request:
+  #   branches:
+  #     - master
 
 jobs:
   linux:
