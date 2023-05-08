@@ -11,34 +11,6 @@ name = "tantivy"
 crate-type = ["cdylib"]
 
 [build-dependencies]
-<<<<<<< HEAD
-<<<<<<< HEAD
-pyo3-build-config = "0.18.0"
-
-[dependencies]
-chrono = "0.4.23"
-tantivy = "0.19.2"
-itertools = "0.10.5"
-futures = "0.3.26"
-serde_json = "1.0.91"
-
-[dependencies.pyo3]
-version = "0.18.0"
-=======
-pyo3-build-config = { version = "0.18.3" }
-
-[dependencies]
-chrono = { version = "0.4.24" }
-tantivy = { version = "0.19.2" }
-itertools = { version = "0.10.5" }
-futures = { version = "0.3.28" }
-serde_json = { version = "1.0.96" }
-
-[dependencies.pyo3]
-version = "0.18.3"
->>>>>>> 61de98c33cf61e844c05b14848b9a033edbd0a4f
-features = ["extension-module"]
-=======
 pyo3-build-config = { version = "0.18.3" }
 
 [dependencies]
@@ -51,4 +23,3 @@ serde_json = { version = "1.0.96" }
 [dependencies.pyo3]
 version = "0.18.3"
 features = ["extension-module"]
->>>>>>> 61de98c33cf61e844c05b14848b9a033edbd0a4f
