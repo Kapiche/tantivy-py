@@ -17,7 +17,11 @@ jobs:
     steps:
       - name: Harden Runner
 <<<<<<< HEAD
+<<<<<<< HEAD
         uses: step-security/harden-runner@1f99358870fe1c846a3ccba386cc2b2246836776
+=======
+        uses: step-security/harden-runner@03bee3930647ebbf994244c21ddbc0d4933aab4f
+>>>>>>> 61de98c33cf61e844c05b14848b9a033edbd0a4f
 =======
         uses: step-security/harden-runner@03bee3930647ebbf994244c21ddbc0d4933aab4f
 >>>>>>> 61de98c33cf61e844c05b14848b9a033edbd0a4f
@@ -29,11 +33,16 @@ jobs:
             static.rust-lang.org:443
 
 <<<<<<< HEAD
+<<<<<<< HEAD
       - name: Checkout
         uses: actions/checkout@61b9e3751b92087fd0b06925ba6dd6314e06f089
 
       - name: Rust toolchain
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+=======
+      - uses: actions/checkout@61b9e3751b92087fd0b06925ba6dd6314e06f089
+      - uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+>>>>>>> 61de98c33cf61e844c05b14848b9a033edbd0a4f
 =======
       - uses: actions/checkout@61b9e3751b92087fd0b06925ba6dd6314e06f089
       - uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
@@ -63,7 +72,11 @@ jobs:
     steps:
       - name: Harden Runner
 <<<<<<< HEAD
+<<<<<<< HEAD
         uses: step-security/harden-runner@1f99358870fe1c846a3ccba386cc2b2246836776
+=======
+        uses: step-security/harden-runner@03bee3930647ebbf994244c21ddbc0d4933aab4f
+>>>>>>> 61de98c33cf61e844c05b14848b9a033edbd0a4f
 =======
         uses: step-security/harden-runner@03bee3930647ebbf994244c21ddbc0d4933aab4f
 >>>>>>> 61de98c33cf61e844c05b14848b9a033edbd0a4f
