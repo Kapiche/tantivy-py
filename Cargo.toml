@@ -15,7 +15,7 @@ pyo3-build-config = { version = "0.18.3" }
 
 [dependencies]
 chrono = { version = "0.4.24" }
-tantivy = { version = "0.19.2" }
+tantivy = { version = "0.20.1" }
 itertools = { version = "0.10.5" }
 futures = { version = "0.3.28" }
 serde_json = { version = "1.0.96" }
