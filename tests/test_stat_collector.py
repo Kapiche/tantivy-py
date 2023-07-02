@@ -98,7 +98,9 @@ def test_stat_searcher_memory():
     index = Index(schema, None)
     writer = index.writer()
 
-    sherlock = open('tests/sherlock.txt', 'r').read().split('\n\n')
+    sherlock = (
+        open("tests/sherlock.txt", "r", encoding="utf-8-sig").read().split("\n\n")
+    )
     for i, paragraph in enumerate(sherlock):
         doc = Document()
         doc.add_text("title", f"Paragraph {i}")
