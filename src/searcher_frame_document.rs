@@ -5,7 +5,8 @@ use std::iter::FromIterator;
 
 use crate::more_collectors::StatsCollector;
 use crate::{document::Document, query::Query, to_pyerr};
-use pyo3::types::PySet;
+use pyo3::types::{PySet, PyInt, PyTuple};
+use pyo3::Py;
 use pyo3::{exceptions::PyValueError, prelude::*};
 use tantivy as tv;
 use tantivy::collector::FilterCollector;
@@ -56,25 +57,28 @@ impl SearchResult {
     }
 
     #[getter]
-    fn unique_docs(&self, py: Python) -> PyResult<BTreeSet<u64>> {
+    fn unique_docs(&self, py: Python) -> PyResult<Vec<u64>> {
         let s =
             BTreeSet::from_iter(self.hits.iter().map(|(d, f, s, score)| *d));
-        Ok(s)
+        let v = Vec::from_iter(s.into_iter());
+        Ok(v)
     }
 
     #[getter]
-    fn unique_frames(&self, py: Python) -> PyResult<BTreeSet<u64>> {
+    fn unique_frames(&self, py: Python) -> PyResult<Vec<u64>> {
         let s =
             BTreeSet::from_iter(self.hits.iter().map(|(d, f, s, score)| *f));
-        Ok(s)
+        let v = Vec::from_iter(s.into_iter());
+        Ok(v)
     }
 
     #[getter]
-    fn unique_docs_frames(&self, py: Python) -> PyResult<BTreeSet<(u64, u64)>> {
+    fn unique_docs_frames(&self, py: Python) -> PyResult<Vec<(u64, u64)>> {
         let s = BTreeSet::from_iter(
             self.hits.iter().map(|(d, f, s, score)| (*d, *f)),
         );
-        Ok(s)
+        let v = Vec::from_iter(s.into_iter());
+        Ok(v)
     }
 }
 
