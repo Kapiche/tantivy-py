@@ -5,8 +5,7 @@ use std::iter::FromIterator;
 
 use crate::more_collectors::StatsCollector;
 use crate::{document::Document, query::Query, to_pyerr};
-use pyo3::types::{PySet, PyInt, PyTuple};
-use pyo3::Py;
+use pyo3::types::PySet;
 use pyo3::{exceptions::PyValueError, prelude::*};
 use tantivy as tv;
 use tantivy::collector::FilterCollector;
