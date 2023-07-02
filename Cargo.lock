@@ -283,7 +283,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "374a3a53c1bd5fb31b10084229290eafb0a05f260ec90f1f726afffda4877a8a"
 dependencies = [
  "fastdivide",
- "itertools",
+ "itertools 0.10.5",
  "log",
  "ownedbytes",
  "tantivy-bitpacker",
@@ -493,6 +493,15 @@ name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]
@@ -1065,7 +1074,7 @@ version = "0.19.2"
 dependencies = [
  "chrono",
  "futures",
- "itertools",
+ "itertools 0.11.0",
  "pyo3",
  "pyo3-build-config",
  "serde_json",
@@ -1093,7 +1102,7 @@ dependencies = [
  "fastfield_codecs",
  "fs2",
  "htmlescape",
- "itertools",
+ "itertools 0.10.5",
  "levenshtein_automata",
  "log",
  "lru",
