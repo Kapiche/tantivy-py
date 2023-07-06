@@ -55,16 +55,19 @@ impl SearchResult {
     /// This is an optimization to allow Python callers to obtain vectors
     /// without having to do iteration to get them.
     #[getter]
-    fn unique_docs_frames_unzipped(&self, py: Python) -> PyResult<(Vec<u64>, Vec<u64>)> {
+    fn unique_docs_frames_unzipped(
+        &self,
+        py: Python,
+    ) -> PyResult<(Vec<u64>, Vec<u64>)> {
         let s = BTreeSet::from_iter(
             self.hits.iter().map(|(d, f, s, score)| (*d, *f)),
         );
-        let mut v1= Vec::with_capacity(s.len());
-        let mut v2= Vec::with_capacity(s.len());
+        let mut v1 = Vec::with_capacity(s.len());
+        let mut v2 = Vec::with_capacity(s.len());
         for (d, f) in s.into_iter() {
             v1.push(d);
             v2.push(f);
-        };
+        }
         Ok((v1, v2))
     }
 }
@@ -112,9 +115,7 @@ impl StatSearcher {
                 query.get(),
                 &FilterCollector::new(
                     field,
-                    move |value: u64| {
-                        members.contains(&value)
-                    },
+                    move |value: u64| members.contains(&value),
                     sc,
                 ),
             )
