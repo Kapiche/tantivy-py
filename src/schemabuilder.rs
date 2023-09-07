@@ -164,28 +164,6 @@ impl SchemaBuilder {
         Ok(self.clone())
     }
 
-    #[pyo3(signature = (name, stored = false, indexed = false, fast = None))]
-    fn add_float_field(
-        &mut self,
-        name: &str,
-        stored: bool,
-        indexed: bool,
-        fast: Option<&str>,
-    ) -> PyResult<Self> {
-        let builder = &mut self.builder;
-
-        let opts = SchemaBuilder::build_numeric_option(stored, indexed, fast)?;
-
-        if let Some(builder) = builder.write().unwrap().as_mut() {
-            builder.add_f64_field(name, opts);
-        } else {
-            return Err(exceptions::PyValueError::new_err(
-                "Schema builder object isn't valid anymore.",
-            ));
-        }
-        Ok(self.clone())
-    }
-
     /// Add a new unsigned integer field to the schema.
     ///
     /// Args:

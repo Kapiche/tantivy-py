@@ -294,7 +294,7 @@ pub(crate) struct Index {
 // It combines a WhiteSpaceTokenizer with a StopWordFilter, OuterPunctuationFilter
 // and a PossessiveContractionFilter.
 fn get_kapiche_tokenizer() -> TextAnalyzer {
-    TextAnalyzer::from(WhitespaceTokenizer)
+    TextAnalyzer::from(WhitespaceTokenizer::default())
         .filter(OuterPunctuationFilter::new(vec!['#', '@']))
         .filter(PossessiveContractionFilter)
 }

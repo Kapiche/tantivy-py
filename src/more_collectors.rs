@@ -44,13 +44,13 @@ impl StatsCollector {
         &self,
         field: &str,
         segment_reader: &SegmentReader,
-    ) -> tantivy::Result<Arc<dyn Column>> {
+    ) -> tantivy::Result<Column> {
         // Look up the correct `Field` instance from the string name
-        let f = segment_reader
-            .schema()
-            .get_field(field)
-            .expect("Given field doesn't exist.");
-        segment_reader.fast_fields().u64(f)
+        // let f = segment_reader
+        //     .schema()
+        //     .get_field(field)
+        //     .expect("Given field doesn't exist.");
+        segment_reader.fast_fields().u64(field)
     }
 }
 
@@ -100,9 +100,9 @@ impl Collector for StatsCollector {
 }
 
 pub struct StatsSegmentCollector {
-    fast_field_reader_document_id: Arc<dyn Column>,
-    fast_field_reader_frame_id: Arc<dyn Column>,
-    fast_field_reader_sentence_id: Arc<dyn Column>,
+    fast_field_reader_document_id: Column,
+    fast_field_reader_frame_id: Column,
+    fast_field_reader_sentence_id: Column,
     stats: Stats,
 }
 
