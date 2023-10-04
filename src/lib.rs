@@ -3,13 +3,16 @@ use pyo3::{exceptions, prelude::*, wrap_pymodule};
 
 mod document;
 mod facet;
+mod filters;
 mod index;
 mod parser_error;
+mod more_collectors;
 mod query;
 mod schema;
 mod schemabuilder;
 mod searcher;
 mod snippet;
+mod searcher_frame_document;
 
 use document::Document;
 use facet::Facet;
