@@ -2,7 +2,6 @@ from io import BytesIO
 
 import copy
 import datetime
-import tantivy
 import pickle
 import pytest
 import tantivy
