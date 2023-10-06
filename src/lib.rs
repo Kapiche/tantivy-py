@@ -5,14 +5,14 @@ mod document;
 mod facet;
 mod filters;
 mod index;
-mod parser_error;
 mod more_collectors;
+mod parser_error;
 mod query;
 mod schema;
 mod schemabuilder;
 mod searcher;
-mod snippet;
 mod searcher_frame_document;
+mod snippet;
 
 use document::Document;
 use facet::Facet;
