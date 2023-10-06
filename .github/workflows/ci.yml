@@ -34,7 +34,45 @@ jobs:
           components: rustfmt
 
       - name: Check Formatting
-        run: cargo fmt --check
+        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
+        with:
+          command: fmt
+          args: --check
+
+  Clippy:
+    permissions:
+      checks: write # to write annotations
+      contents: read # for actions/checkout to fetch code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            crates.io:443
+            github.com:443
+            api.github.com:443
+            static.crates.io:443
+            index.crates.io:443
+            static.rust-lang.org:443
+
+      - name: Checkout
+        uses: actions/checkout@61b9e3751b92087fd0b06925ba6dd6314e06f089
+        with:
+          fetch-depth: 0
+
+      - name: install clippy
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: run clippy
+        uses: auguwu/clippy-action@a5ee75455bcbefe22f0cbbdb10d064139708c7bc # 1.2.1
+        with:
+          token: ${{secrets.GITHUB_TOKEN}}
+          deny: warnings
 
   Test:
     strategy:
