@@ -516,7 +516,7 @@ class TestSearcher(object):
         assert ram_index.searcher().num_segments == 1
         assert (
             repr(ram_index_numeric_fields.searcher())
-            == "Searcher(num_docs=2, num_segments=2)"
+            == "Searcher(num_docs=2, num_segments=1)"
         )
 
 
