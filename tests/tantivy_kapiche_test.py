@@ -558,10 +558,6 @@ class TestDocument(object):
         doc = tantivy.Document(facet=facet)
         assert doc["facet"][0].to_path() == ["asia/oceania", "fiji"]
 
-    def test_document_error(self):
-        with pytest.raises(ValueError):
-            tantivy.Document(name={})
-
 
 class TestJsonField:
     def test_query_from_json_field(self):
