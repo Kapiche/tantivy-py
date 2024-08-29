@@ -135,13 +135,12 @@ impl StatSearcher {
 
         let ret = if let Some(members) = filter_fastfield_values {
             let field_name = filter_fastfield_name.unwrap();
-            let field = self.inner.schema().get_field(&field_name).ok_or_else(|| {
-                PyValueError::new_err(format!("Field {field_name} not found"))
-            })?;
-            self.inner.search(
-                query.get(),
-                &FilterCollector::for_field(field).with_predicate(move |value: u64| members.contains(&value)).wrap(sc),
-            )
+            let collector = FilterCollector::new(
+                field_name,
+                move |value: u64| members.contains(&value),
+                sc,
+            );
+            self.inner.search(query.get(), &collector)
         } else {
             self.inner.search(query.get(), &sc)
         };
@@ -175,7 +174,8 @@ impl StatSearcher {
     /// Returns the Document, raises ValueError if the document can't be found.
     fn doc(&self, doc_address: &DocAddress) -> PyResult<Document> {
         let doc = self.inner.doc(doc_address.into()).map_err(to_pyerr)?;
-        let named_doc = self.inner.schema().to_named_doc(&doc);
+        let schema = self.inner.schema();
+        let named_doc = doc.to_named_doc(&schema);
         Ok(Document {
             field_values: named_doc.0,
         })
