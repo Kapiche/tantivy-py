@@ -61,9 +61,6 @@ jobs:
             allow-prereleases: true
             unsafe-pyo3-skip-version-check: 1
           - os: ubuntu-latest
-            python-version: "3.12"
-            allow-prereleases: false
-          - os: ubuntu-latest
             python-version: "3.11"
             allow-prereleases: false
           - os: ubuntu-latest
