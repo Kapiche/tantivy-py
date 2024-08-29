@@ -6,11 +6,15 @@ use pyo3::{exceptions, prelude::*, types::PyAny};
 
 use crate::{
     document::{extract_value, Document},
+    filters::get_stopwords_filter_en,
+    filters::outer_punctuation_filter::OuterPunctuationFilter,
+    filters::possessive_contraction_filter::PossessiveContractionFilter,
     get_field,
     parser_error::QueryParserErrorIntoPy,
     query::Query,
     schema::Schema,
     searcher::Searcher,
+    searcher_frame_document::StatSearcher,
     to_pyerr,
 };
 use tantivy as tv;
@@ -18,11 +22,11 @@ use tantivy::{
     directory::MmapDirectory,
     schema::{
         document::TantivyDocument, NamedFieldDocument, OwnedValue as Value,
-        Term,
+        Term, Type
     },
     tokenizer::{
         Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
-        TextAnalyzer,
+        StopWordFilter, TextAnalyzer, WhitespaceTokenizer,
     },
 };
 
