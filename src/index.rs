@@ -2,11 +2,15 @@
 
 use std::collections::HashMap;
 
-use pyo3::{exceptions, prelude::*, types::PyAny};
+use pyo3::{
+    exceptions,
+    prelude::*,
+    types::{PyAny, PyDateAccess, PyDateTime, PyInt, PyTimeAccess},
+};
 
+use crate::facet::Facet;
 use crate::{
     document::{extract_value, Document},
-    filters::get_stopwords_filter_en,
     filters::outer_punctuation_filter::OuterPunctuationFilter,
     filters::possessive_contraction_filter::PossessiveContractionFilter,
     get_field,
@@ -17,16 +21,17 @@ use crate::{
     searcher_frame_document::StatSearcher,
     to_pyerr,
 };
+use chrono::{Utc};
 use tantivy as tv;
 use tantivy::{
     directory::MmapDirectory,
     schema::{
         document::TantivyDocument, NamedFieldDocument, OwnedValue as Value,
-        Term, Type
+        Term, Type,
     },
     tokenizer::{
         Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
-        StopWordFilter, TextAnalyzer, WhitespaceTokenizer,
+        TextAnalyzer, WhitespaceTokenizer,
     },
 };
 
@@ -160,7 +165,7 @@ impl IndexWriter {
     fn delete_documents_kapiche(
         &mut self,
         field_name: &str,
-        field_value: &PyAny,
+        field_value: &Bound<PyAny>,
     ) -> PyResult<u64> {
         let field = get_field(&self.schema, field_name)?;
         let field_value_type =
