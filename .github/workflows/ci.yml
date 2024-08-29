@@ -71,6 +71,7 @@ jobs:
             allow-prereleases: false
           - os: ubuntu-latest
             python-version: 3.8
+            allow-prereleases: false
     runs-on: "${{ matrix.os }}"
     steps:
       - name: Harden Runner
