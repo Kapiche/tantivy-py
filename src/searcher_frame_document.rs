@@ -173,7 +173,8 @@ impl StatSearcher {
     ///
     /// Returns the Document, raises ValueError if the document can't be found.
     fn doc(&self, doc_address: &DocAddress) -> PyResult<Document> {
-        let doc = self.inner.doc(doc_address.into()).map_err(to_pyerr)?;
+        let doc: tv::Document =
+            self.inner.doc(doc_address.into()).map_err(to_pyerr)?;
         let schema = self.inner.schema();
         let named_doc = doc.to_named_doc(&schema);
         Ok(Document {

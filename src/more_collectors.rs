@@ -207,7 +207,8 @@ fn main() -> tantivy::Result<()> {
     let analysis_frame_ids = [1u64, 2u64, 5u64];
     // https://docs.rs/pyo3/latest/pyo3/types/struct.PySet.html
     let analysis_filter = BTreeSet::from(analysis_frame_ids);
-    let frame_id_field_name = searcher.schema().get_field_name(frame_id).to_string();
+    let frame_id_field_name =
+        searcher.schema().get_field_name(frame_id).to_string();
 
     if let Some(stats) = searcher.search(
         &query,

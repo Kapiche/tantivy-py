@@ -1,6 +1,6 @@
 use std::mem;
 
-use tantivy::tokenizer::{Tokenizer};
+use tantivy::tokenizer::Tokenizer;
 use tantivy::tokenizer::{Token, TokenFilter, TokenStream};
 
 // 'OuterPunctuationFilter' removes any leading or trailing punctuations from tokens.
