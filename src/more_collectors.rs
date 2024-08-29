@@ -8,7 +8,6 @@
 // such as the `CountCollector` for more examples.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 // ---
 // Importing tantivy...
 use tantivy::collector::{Collector, FilterCollector, SegmentCollector};
@@ -208,11 +207,12 @@ fn main() -> tantivy::Result<()> {
     let analysis_frame_ids = [1u64, 2u64, 5u64];
     // https://docs.rs/pyo3/latest/pyo3/types/struct.PySet.html
     let analysis_filter = BTreeSet::from(analysis_frame_ids);
+    let frame_id_field_name = searcher.schema().get_field_name(frame_id).to_string();
 
     if let Some(stats) = searcher.search(
         &query,
         &FilterCollector::new(
-            frame_id,
+            frame_id_field_name,
             move |value: u64| analysis_filter.contains(&value),
             StatsCollector::new(),
         ),

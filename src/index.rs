@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use pyo3::{
     exceptions,
     prelude::*,
-    types::{PyAny, PyDateAccess, PyDateTime, PyInt, PyTimeAccess},
+    types::{PyAny, PyDateAccess, PyDateTime, PyTimeAccess},
 };
 
 use crate::facet::Facet;
@@ -21,7 +21,7 @@ use crate::{
     searcher_frame_document::StatSearcher,
     to_pyerr,
 };
-use chrono::{Utc};
+use chrono::{offset::TimeZone, Utc};
 use tantivy as tv;
 use tantivy::{
     directory::MmapDirectory,

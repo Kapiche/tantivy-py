@@ -135,17 +135,12 @@ impl StatSearcher {
 
         let ret = if let Some(members) = filter_fastfield_values {
             let field_name = filter_fastfield_name.unwrap();
-            let field = self.inner.schema().get_field(&field_name).or({
-                let msg = format!("Field {field_name} not found");
-                Err(PyValueError::new_err(msg))
+            let field = self.inner.schema().get_field(&field_name).ok_or_else(|| {
+                PyValueError::new_err(format!("Field {field_name} not found"))
             })?;
             self.inner.search(
                 query.get(),
-                &FilterCollector::new(
-                    field,
-                    move |value: u64| members.contains(&value),
-                    sc,
-                ),
+                &FilterCollector::for_field(field).with_predicate(move |value: u64| members.contains(&value)).wrap(sc),
             )
         } else {
             self.inner.search(query.get(), &sc)
