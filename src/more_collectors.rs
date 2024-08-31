@@ -212,7 +212,7 @@ fn main() -> tantivy::Result<()> {
     if let Some(stats) = searcher.search(
         &query,
         &FilterCollector::new(
-            frame_id,
+            "frame_id__".to_string(),
             move |value: u64| analysis_filter.contains(&value),
             StatsCollector::new(),
         ),

@@ -2,7 +2,11 @@
 
 use std::collections::HashMap;
 
-use pyo3::{exceptions, prelude::*, types::PyAny};
+use pyo3::{
+    exceptions,
+    prelude::*,
+    types::{PyAny, PyDateAccess, PyDateTime, PyInt, PyTimeAccess},
+};
 
 use crate::facet::Facet;
 use crate::{
@@ -25,7 +29,7 @@ use tantivy::{
     directory::MmapDirectory,
     schema::{
         document::TantivyDocument, NamedFieldDocument, OwnedValue as Value,
-        Term,
+        Term, Type,
     },
     tokenizer::{
         Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
