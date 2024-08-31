@@ -1,6 +1,6 @@
 #![allow(clippy::new_ret_no_self)]
 
-use std::collections::BTreeSet;
+use fnv::FnvHashSet;
 use std::iter::FromIterator;
 
 use crate::more_collectors::StatsCollector;
@@ -33,30 +33,30 @@ impl SearchResult {
     }
 
     #[getter]
-    fn unique_docs(&self, py: Python) -> PyResult<BTreeSet<u64>> {
+    fn unique_docs(&self) -> PyResult<FnvHashSet<u64>> {
         let s =
-            BTreeSet::from_iter(self.hits.iter().map(|(d, f, s, score)| *d));
+            FnvHashSet::from_iter(self.hits.iter().map(|(d, _f, _s, _score)| *d));
         Ok(s)
     }
 
     #[getter]
-    fn unique_frames(&self, py: Python) -> PyResult<BTreeSet<u64>> {
+    fn unique_frames(&self) -> PyResult<FnvHashSet<u64>> {
         let s =
-            BTreeSet::from_iter(self.hits.iter().map(|(d, f, s, score)| *f));
+            FnvHashSet::from_iter(self.hits.iter().map(|(_d, f, _s, _score)| *f));
         Ok(s)
     }
 
     #[getter]
-    fn unique_sentences(&self, py: Python) -> PyResult<BTreeSet<u64>> {
+    fn unique_sentences(&self) -> PyResult<FnvHashSet<u64>> {
         let s =
-            BTreeSet::from_iter(self.hits.iter().map(|(d, f, s, score)| *s));
+            FnvHashSet::from_iter(self.hits.iter().map(|(_d, _f, s, _score)| *s));
         Ok(s)
     }
 
     #[getter]
-    fn unique_docs_frames(&self, py: Python) -> PyResult<BTreeSet<(u64, u64)>> {
-        let s = BTreeSet::from_iter(
-            self.hits.iter().map(|(d, f, s, score)| (*d, *f)),
+    fn unique_docs_frames(&self) -> PyResult<FnvHashSet<(u64, u64)>> {
+        let s = FnvHashSet::from_iter(
+            self.hits.iter().map(|(d, f, _s, _score)| (*d, *f)),
         );
         Ok(s)
     }
@@ -66,10 +66,9 @@ impl SearchResult {
     #[getter]
     fn unique_docs_frames_unzipped(
         &self,
-        py: Python,
     ) -> PyResult<(Vec<u64>, Vec<u64>)> {
-        let s = BTreeSet::from_iter(
-            self.hits.iter().map(|(d, f, s, score)| (*d, *f)),
+        let s = FnvHashSet::from_iter(
+            self.hits.iter().map(|(d, f, _s, _score)| (*d, *f)),
         );
         let mut v1 = Vec::with_capacity(s.len());
         let mut v2 = Vec::with_capacity(s.len());
@@ -85,10 +84,9 @@ impl SearchResult {
     #[getter]
     fn unique_docs_frames_sentences_unzipped(
         &self,
-        py: Python,
     ) -> PyResult<(Vec<u64>, Vec<u64>, Vec<u64>)> {
-        let s = BTreeSet::from_iter(
-            self.hits.iter().map(|(d, f, s, score)| (*d, *f, *s)),
+        let s = FnvHashSet::from_iter(
+            self.hits.iter().map(|(d, f, s, _score)| (*d, *f, *s)),
         );
         let mut v1 = Vec::with_capacity(s.len());
         let mut v2 = Vec::with_capacity(s.len());
@@ -122,7 +120,7 @@ impl StatSearcher {
         _py: Python,
         query: &Query,
         filter_fastfield_name: Option<String>,
-        filter_fastfield_values: Option<BTreeSet<u64>>,
+        filter_fastfield_values: Option<FnvHashSet<u64>>,
     ) -> PyResult<SearchResult> {
         if filter_fastfield_values.is_some() {
             if filter_fastfield_name.is_none() {
@@ -137,10 +135,6 @@ impl StatSearcher {
 
         let ret = if let Some(members) = filter_fastfield_values {
             let field_name = filter_fastfield_name.unwrap();
-            let field = self.inner.schema().get_field(&field_name).or({
-                let msg = format!("Field {field_name} not found");
-                Err(PyValueError::new_err(msg))
-            })?;
             self.inner.search(
                 query.get(),
                 &FilterCollector::new(

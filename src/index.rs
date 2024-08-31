@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use pyo3::{
     exceptions,
     prelude::*,
-    types::{PyAny, PyDateAccess, PyDateTime, PyInt, PyTimeAccess},
+    types::{PyAny, PyDateAccess, PyDateTime, PyTimeAccess},
 };
 
 use crate::facet::Facet;

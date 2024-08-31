@@ -1105,6 +1105,7 @@ version = "0.22.0"
 dependencies = [
  "base64",
  "chrono",
+ "fnv",
  "futures",
  "itertools 0.13.0",
  "pyo3",

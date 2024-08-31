@@ -7,15 +7,9 @@
 // Of course, you can have a look at the tantivy's built-in collectors
 // such as the `CountCollector` for more examples.
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
-// ---
-// Importing tantivy...
-use tantivy::collector::{Collector, FilterCollector, SegmentCollector};
+use tantivy::collector::{Collector, SegmentCollector};
 use tantivy::fastfield::Column;
-use tantivy::query::QueryParser;
-use tantivy::schema::{Schema, FAST, INDEXED, STORED, TEXT};
-use tantivy::{doc, Index, Score, SegmentReader};
+use tantivy::{Score, SegmentReader};
 
 #[derive(Default, Debug)]
 pub struct Stats {
@@ -46,7 +40,7 @@ impl StatsCollector {
         segment_reader: &SegmentReader,
     ) -> tantivy::Result<Column> {
         // Look up the correct `Field` instance from the string name
-        let f = segment_reader
+        let _f = segment_reader
             .schema()
             .get_field(field)
             .expect("Given field doesn't exist.");
