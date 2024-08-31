@@ -34,22 +34,25 @@ impl SearchResult {
 
     #[getter]
     fn unique_docs(&self) -> PyResult<FnvHashSet<u64>> {
-        let s =
-            FnvHashSet::from_iter(self.hits.iter().map(|(d, _f, _s, _score)| *d));
+        let s = FnvHashSet::from_iter(
+            self.hits.iter().map(|(d, _f, _s, _score)| *d),
+        );
         Ok(s)
     }
 
     #[getter]
     fn unique_frames(&self) -> PyResult<FnvHashSet<u64>> {
-        let s =
-            FnvHashSet::from_iter(self.hits.iter().map(|(_d, f, _s, _score)| *f));
+        let s = FnvHashSet::from_iter(
+            self.hits.iter().map(|(_d, f, _s, _score)| *f),
+        );
         Ok(s)
     }
 
     #[getter]
     fn unique_sentences(&self) -> PyResult<FnvHashSet<u64>> {
-        let s =
-            FnvHashSet::from_iter(self.hits.iter().map(|(_d, _f, s, _score)| *s));
+        let s = FnvHashSet::from_iter(
+            self.hits.iter().map(|(_d, _f, s, _score)| *s),
+        );
         Ok(s)
     }
 
@@ -64,9 +67,7 @@ impl SearchResult {
     /// This is an optimization to allow Python callers to obtain vectors
     /// without having to do iteration to get them.
     #[getter]
-    fn unique_docs_frames_unzipped(
-        &self,
-    ) -> PyResult<(Vec<u64>, Vec<u64>)> {
+    fn unique_docs_frames_unzipped(&self) -> PyResult<(Vec<u64>, Vec<u64>)> {
         let s = FnvHashSet::from_iter(
             self.hits.iter().map(|(d, f, _s, _score)| (*d, *f)),
         );
