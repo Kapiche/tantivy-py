@@ -148,12 +148,12 @@ mod tests {
         let product_description =
             schema_builder.add_text_field("description", TEXT);
         let price = schema_builder.add_u64_field("price", INDEXED | FAST);
-        let document_id =
-            schema_builder.add_u64_field("document_id__", STORED | INDEXED | FAST);
+        let document_id = schema_builder
+            .add_u64_field("document_id__", STORED | INDEXED | FAST);
         let frame_id =
             schema_builder.add_u64_field("frame_id__", STORED | INDEXED | FAST);
-        let sentence_id =
-            schema_builder.add_u64_field("sentence_id__", STORED | INDEXED | FAST);
+        let sentence_id = schema_builder
+            .add_u64_field("sentence_id__", STORED | INDEXED | FAST);
         let schema = schema_builder.build();
 
         // # Indexing documents
@@ -211,8 +211,10 @@ mod tests {
 
         let reader = index.reader()?;
         let searcher = reader.searcher();
-        let query_parser =
-            QueryParser::for_index(&index, vec![product_name, product_description]);
+        let query_parser = QueryParser::for_index(
+            &index,
+            vec![product_name, product_description],
+        );
 
         // here we want to search for `broom` and use `StatsCollector` on the hits.
         let query = query_parser.parse_query("broom")?;
