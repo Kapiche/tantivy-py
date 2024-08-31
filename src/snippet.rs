@@ -1,17 +1,19 @@
 use crate::to_pyerr;
 use pyo3::prelude::*;
 use tantivy as tv;
+// Bring the trait into scope to use methods like `as_str()` on `OwnedValue`.
+use tantivy::schema::Value;
 
-/// Tantivy schema.
+/// Tantivy Snippet
 ///
-/// The schema is very strict. To build the schema the `SchemaBuilder` class is
-/// provided.
-#[pyclass]
+/// Snippet contains a fragment of a document, and some highlighted
+/// parts inside it.
+#[pyclass(module = "tantivy.tantivy")]
 pub(crate) struct Snippet {
     pub(crate) inner: tv::Snippet,
 }
 
-#[pyclass]
+#[pyclass(module = "tantivy.tantivy")]
 pub(crate) struct Range {
     #[pyo3(get)]
     start: usize,
@@ -38,7 +40,7 @@ impl Snippet {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "tantivy.tantivy")]
 pub(crate) struct SnippetGenerator {
     pub(crate) field_name: String,
     pub(crate) inner: tv::SnippetGenerator,
@@ -62,20 +64,24 @@ impl SnippetGenerator {
             tv::SnippetGenerator::create(&searcher.inner, query.get(), field)
                 .map_err(to_pyerr)?;
 
-        return Ok(SnippetGenerator {
+        Ok(SnippetGenerator {
             field_name: field_name.to_string(),
             inner: generator,
-        });
+        })
     }
 
     pub fn snippet_from_doc(&self, doc: &crate::Document) -> crate::Snippet {
         let text: String = doc
             .iter_values_for_field(&self.field_name)
-            .flat_map(tv::schema::Value::as_text)
+            .flat_map(|ov| ov.as_str())
             .collect::<Vec<&str>>()
             .join(" ");
 
         let result = self.inner.snippet(&text);
         Snippet { inner: result }
+    }
+
+    pub fn set_max_num_chars(&mut self, max_num_chars: usize) {
+        self.inner.set_max_num_chars(max_num_chars);
     }
 }

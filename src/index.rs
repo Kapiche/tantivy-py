@@ -1,10 +1,8 @@
 #![allow(clippy::new_ret_no_self)]
 
-use pyo3::{
-    exceptions,
-    prelude::*,
-    types::{PyAny, PyDateAccess, PyDateTime, PyInt, PyTimeAccess},
-};
+use std::collections::HashMap;
+
+use pyo3::{exceptions, prelude::*, types::PyAny};
 
 use crate::facet::Facet;
 use crate::{
@@ -25,7 +23,10 @@ use chrono::{offset::TimeZone, Utc};
 use tantivy as tv;
 use tantivy::{
     directory::MmapDirectory,
-    schema::{NamedFieldDocument, Term, Type, Value},
+    schema::{
+        document::TantivyDocument, NamedFieldDocument, OwnedValue as Value,
+        Term,
+    },
     tokenizer::{
         Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
         StopWordFilter, TextAnalyzer, WhitespaceTokenizer,
@@ -38,7 +39,7 @@ const RELOAD_POLICY: &str = "commit";
 ///
 /// To create an IndexWriter first create an Index and call the writer() method
 /// on the index object.
-#[pyclass]
+#[pyclass(module = "tantivy.tantivy")]
 pub(crate) struct IndexWriter {
     inner_index_writer: Option<tv::IndexWriter>,
     schema: tv::schema::Schema,
@@ -82,7 +83,8 @@ impl IndexWriter {
     /// since the creation of the index.
     pub fn add_document(&mut self, doc: &Document) -> PyResult<u64> {
         let named_doc = NamedFieldDocument(doc.field_values.clone());
-        let doc = self.schema.convert_named_doc(named_doc).map_err(to_pyerr)?;
+        let doc = TantivyDocument::convert_named_doc(&self.schema, named_doc)
+            .map_err(to_pyerr)?;
         self.inner()?.add_document(doc).map_err(to_pyerr)
     }
 
@@ -95,7 +97,8 @@ impl IndexWriter {
     /// The `opstamp` represents the number of documents that have been added
     /// since the creation of the index.
     pub fn add_json(&mut self, json: &str) -> PyResult<u64> {
-        let doc = self.schema.parse_document(json).map_err(to_pyerr)?;
+        let doc = TantivyDocument::parse_json(&self.schema, json)
+            .map_err(to_pyerr)?;
         let opstamp = self.inner()?.add_document(doc);
         opstamp.map_err(to_pyerr)
     }
@@ -238,11 +241,16 @@ impl IndexWriter {
     fn delete_documents(
         &mut self,
         field_name: &str,
-        field_value: &PyAny,
+        field_value: &Bound<PyAny>,
     ) -> PyResult<u64> {
         let field = get_field(&self.schema, field_name)?;
         let value = extract_value(field_value)?;
         let term = match value {
+            Value::Null => {
+                return Err(exceptions::PyValueError::new_err(format!(
+                    "Field `{field_name}` is null type not deletable."
+                )))
+            },
             Value::Str(text) => Term::from_field_text(field, &text),
             Value::U64(num) => Term::from_field_u64(field, num),
             Value::I64(num) => Term::from_field_i64(field, num),
@@ -259,7 +267,12 @@ impl IndexWriter {
                     "Field `{field_name}` is pretokenized. This is not authorized for delete."
                 )))
             }
-            Value::JsonObject(_) => {
+            Value::Array(_) => {
+                return Err(exceptions::PyValueError::new_err(format!(
+                    "Field `{field_name}` is array type not deletable."
+                )))
+            }
+            Value::Object(_) => {
                 return Err(exceptions::PyValueError::new_err(format!(
                     "Field `{field_name}` is json object type not deletable."
                 )))
@@ -291,7 +304,7 @@ impl IndexWriter {
 ///
 /// If an index already exists it will be opened and reused. Raises OSError
 /// if there was a problem during the opening or creation of the index.
-#[pyclass]
+#[pyclass(module = "tantivy.tantivy")]
 pub(crate) struct Index {
     pub(crate) index: tv::Index,
     reader: tv::IndexReader,
@@ -427,9 +440,9 @@ impl Index {
     ) -> Result<(), PyErr> {
         let reload_policy = reload_policy.to_lowercase();
         let reload_policy = match reload_policy.as_ref() {
-            "commit" => tv::ReloadPolicy::OnCommit,
-            "on-commit" => tv::ReloadPolicy::OnCommit,
-            "oncommit" => tv::ReloadPolicy::OnCommit,
+            "commit" => tv::ReloadPolicy::OnCommitWithDelay,
+            "on-commit" => tv::ReloadPolicy::OnCommitWithDelay,
+            "oncommit" => tv::ReloadPolicy::OnCommitWithDelay,
             "manual" => tv::ReloadPolicy::Manual,
             _ => return Err(exceptions::PyValueError::new_err(
                 "Invalid reload policy, valid choices are: 'manual' and 'OnCommit'"
@@ -496,44 +509,33 @@ impl Index {
     ///
     /// Args:
     ///     query: the query, following the tantivy query language.
+    ///
     ///     default_fields_names (List[Field]): A list of fields used to search if no
     ///         field is specified in the query.
     ///
-    #[pyo3(signature = (query, default_field_names = None))]
+    ///     field_boosts: A dictionary keyed on field names which provides default boosts
+    ///         for the query constructed by this method.
+    ///
+    ///     fuzzy_fields: A dictionary keyed on field names which provides (prefix, distance, transpose_cost_one)
+    ///         triples making queries constructed by this method fuzzy against the given fields
+    ///         and using the given parameters.
+    ///         `prefix` determines if terms which are prefixes of the given term match the query.
+    ///         `distance` determines the maximum Levenshtein distance between terms matching the query and the given term.
+    ///         `transpose_cost_one` determines if transpositions of neighbouring characters are counted only once against the Levenshtein distance.
+    #[pyo3(signature = (query, default_field_names = None, field_boosts = HashMap::new(), fuzzy_fields = HashMap::new()))]
     pub fn parse_query(
         &self,
         query: &str,
         default_field_names: Option<Vec<String>>,
+        field_boosts: HashMap<String, tv::Score>,
+        fuzzy_fields: HashMap<String, (bool, u8, bool)>,
     ) -> PyResult<Query> {
-        let mut default_fields = vec![];
-        let schema = self.index.schema();
-        if let Some(default_field_names_vec) = default_field_names {
-            for default_field_name in &default_field_names_vec {
-                if let Ok(field) = schema.get_field(default_field_name) {
-                    let field_entry = schema.get_field_entry(field);
-                    if !field_entry.is_indexed() {
-                        return Err(exceptions::PyValueError::new_err(
-                            format!(
-                            "Field `{default_field_name}` is not set as indexed in the schema."
-                        ),
-                        ));
-                    }
-                    default_fields.push(field);
-                } else {
-                    return Err(exceptions::PyValueError::new_err(format!(
-                        "Field `{default_field_name}` is not defined in the schema."
-                    )));
-                }
-            }
-        } else {
-            for (field, field_entry) in self.index.schema().fields() {
-                if field_entry.is_indexed() {
-                    default_fields.push(field);
-                }
-            }
-        }
-        let parser =
-            tv::query::QueryParser::for_index(&self.index, default_fields);
+        let parser = self.prepare_query_parser(
+            default_field_names,
+            field_boosts,
+            fuzzy_fields,
+        )?;
+
         let query = parser.parse_query(query).map_err(to_pyerr)?;
 
         Ok(Query { inner: query })
@@ -548,64 +550,106 @@ impl Index {
     ///
     /// Args:
     ///     query: the query, following the tantivy query language.
+    ///
     ///     default_fields_names (List[Field]): A list of fields used to search if no
     ///         field is specified in the query.
+    ///
+    ///     field_boosts: A dictionary keyed on field names which provides default boosts
+    ///         for the query constructed by this method.
+    ///
+    ///     fuzzy_fields: A dictionary keyed on field names which provides (prefix, distance, transpose_cost_one)
+    ///         triples making queries constructed by this method fuzzy against the given fields
+    ///         and using the given parameters.
+    ///         `prefix` determines if terms which are prefixes of the given term match the query.
+    ///         `distance` determines the maximum Levenshtein distance between terms matching the query and the given term.
+    ///         `transpose_cost_one` determines if transpositions of neighbouring characters are counted only once against the Levenshtein distance.
     ///
     /// Returns a tuple containing the parsed query and a list of errors.
     ///
     /// Raises ValueError if a field in `default_field_names` is not defined or marked as indexed.
-    #[pyo3(signature = (query, default_field_names = None))]
+    #[pyo3(signature = (query, default_field_names = None, field_boosts = HashMap::new(), fuzzy_fields = HashMap::new()))]
     pub fn parse_query_lenient(
         &self,
         query: &str,
         default_field_names: Option<Vec<String>>,
+        field_boosts: HashMap<String, tv::Score>,
+        fuzzy_fields: HashMap<String, (bool, u8, bool)>,
+        py: Python,
     ) -> PyResult<(Query, Vec<PyObject>)> {
-        let schema = self.index.schema();
+        let parser = self.prepare_query_parser(
+            default_field_names,
+            field_boosts,
+            fuzzy_fields,
+        )?;
 
-        let default_fields = if let Some(default_field_names_vec) =
-            default_field_names
-        {
-            default_field_names_vec
-                .iter()
-                .map(|field_name| {
-                    schema
-                        .get_field(field_name)
-                        .map_err(|_err| {
-                            exceptions::PyValueError::new_err(format!(
-                                "Field `{field_name}` is not defined in the schema."
-                            ))
-                        })
-                        .and_then(|field| {
-                            schema.get_field_entry(field).is_indexed().then_some(field).ok_or(
-                                exceptions::PyValueError::new_err(
-                                    format!(
-                                        "Field `{field_name}` is not set as indexed in the schema."
-                                    ),
-                                ))
-                        })
-                }).collect::<Result<Vec<_>, _>>()?
-        } else {
-            self.index
-                .schema()
-                .fields()
-                .filter_map(|(f, fe)| fe.is_indexed().then_some(f))
-                .collect::<Vec<_>>()
-        };
-
-        let parser =
-            tv::query::QueryParser::for_index(&self.index, default_fields);
         let (query, errors) = parser.parse_query_lenient(query);
+        let errors = errors.into_iter().map(|err| err.into_py(py)).collect();
 
-        Python::with_gil(|py| {
-            let errors =
-                errors.into_iter().map(|err| err.into_py(py)).collect();
-
-            Ok((Query { inner: query }, errors))
-        })
+        Ok((Query { inner: query }, errors))
     }
 }
 
 impl Index {
+    fn prepare_query_parser(
+        &self,
+        default_field_names: Option<Vec<String>>,
+        field_boosts: HashMap<String, tv::Score>,
+        fuzzy_fields: HashMap<String, (bool, u8, bool)>,
+    ) -> PyResult<tv::query::QueryParser> {
+        let schema = self.index.schema();
+
+        let default_fields = if let Some(default_field_names) =
+            default_field_names
+        {
+            default_field_names.iter().map(|field_name| {
+                let field = schema.get_field(field_name).map_err(|_err| {
+                    exceptions::PyValueError::new_err(format!(
+                        "Field `{field_name}` is not defined in the schema."
+                    ))
+                })?;
+
+                let field_entry = schema.get_field_entry(field);
+                if !field_entry.is_indexed() {
+                    return Err(exceptions::PyValueError::new_err(
+                        format!("Field `{field_name}` is not set as indexed in the schema.")
+                    ));
+                }
+
+                Ok(field)
+            }).collect::<PyResult<_>>()?
+        } else {
+            schema
+                .fields()
+                .filter(|(_, field_entry)| field_entry.is_indexed())
+                .map(|(field, _)| field)
+                .collect()
+        };
+
+        let mut parser =
+            tv::query::QueryParser::for_index(&self.index, default_fields);
+
+        for (field_name, boost) in field_boosts {
+            let field = schema.get_field(&field_name).map_err(|_err| {
+                exceptions::PyValueError::new_err(format!(
+                    "Field `{field_name}` is not defined in the schema."
+                ))
+            })?;
+            parser.set_field_boost(field, boost);
+        }
+
+        for (field_name, (prefix, distance, transpose_cost_one)) in fuzzy_fields
+        {
+            let field = schema.get_field(&field_name).map_err(|_err| {
+                exceptions::PyValueError::new_err(format!(
+                    "Field `{field_name}` is not defined in the schema."
+                ))
+            })?;
+            parser.set_field_fuzzy(field, prefix, distance, transpose_cost_one);
+        }
+
+        Ok(parser)
+    }
+
     fn register_custom_text_analyzers(index: &tv::Index) {
         let analyzers = [
             ("ar_stem", Language::Arabic),
