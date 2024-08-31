@@ -121,104 +121,117 @@ impl SegmentCollector for StatsSegmentCollector {
     }
 }
 
-fn main() -> tantivy::Result<()> {
-    // # Defining the schema
-    //
-    // The Tantivy index requires a very strict schema.
-    // The schema declares which fields are in the index,
-    // and for each field, its type and "the way it should
-    // be indexed".
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use tantivy::collector::FilterCollector;
+    use tantivy::query::QueryParser;
+    use tantivy::schema::{Schema, FAST, INDEXED, STORED, TEXT};
+    use tantivy::{doc, Index};
 
-    // first we need to define a schema ...
-    let mut schema_builder = Schema::builder();
+    #[test]
+    fn test_collectors() -> tantivy::Result<()> {
+        // # Defining the schema
+        //
+        // The Tantivy index requires a very strict schema.
+        // The schema declares which fields are in the index,
+        // and for each field, its type and "the way it should
+        // be indexed".
 
-    // We'll assume a fictional index containing
-    // products, and with a name, a description, and a price.
-    let product_name = schema_builder.add_text_field("name", TEXT);
-    let product_description =
-        schema_builder.add_text_field("description", TEXT);
-    let price = schema_builder.add_u64_field("price", INDEXED | FAST);
-    let document_id =
-        schema_builder.add_u64_field("document_id__", STORED | INDEXED | FAST);
-    let frame_id =
-        schema_builder.add_u64_field("frame_id__", STORED | INDEXED | FAST);
-    let schema = schema_builder.build();
+        // first we need to define a schema ...
+        let mut schema_builder = Schema::builder();
 
-    // # Indexing documents
-    //
-    // Lets index a bunch of fake documents for the sake of
-    // this example.
-    let index = Index::create_in_ram(schema);
+        // We'll assume a fictional index containing
+        // products, and with a name, a description, and a price.
+        let product_name = schema_builder.add_text_field("name", TEXT);
+        let product_description =
+            schema_builder.add_text_field("description", TEXT);
+        let price = schema_builder.add_u64_field("price", INDEXED | FAST);
+        let document_id =
+            schema_builder.add_u64_field("document_id__", STORED | INDEXED | FAST);
+        let frame_id =
+            schema_builder.add_u64_field("frame_id__", STORED | INDEXED | FAST);
+        let sentence_id =
+            schema_builder.add_u64_field("sentence_id__", STORED | INDEXED | FAST);
+        let schema = schema_builder.build();
 
-    let mut index_writer = index.writer(50_000_000)?;
-    index_writer.add_document(doc!(
-        product_name => "Super Broom 2000",
-        product_description => "While it is ok for short distance travel, this broom \
-        was designed quiditch. It will up your game.",
-        price => 30_200u64,
-        document_id => 1u64,
-        frame_id => 1u64,
-    ))?;
-    index_writer.add_document(doc!(
-        product_name => "Turbulobroom",
-        product_description => "You might have heard of this broom before : it is the sponsor of the Wales team.\
-            You'll enjoy its sharp turns, and rapid acceleration",
-        price => 29_240u64,
-        document_id => 1u64,
-        frame_id => 2u64,
-    ))?;
-    index_writer.add_document(doc!(
-        product_name => "Not relevant",
-        product_description => "We don't care about floor-cleaning.",
-        price => 29_240u64,
-        document_id => 1u64,
-        frame_id => 1u64,
-    ))?;
-    index_writer.add_document(doc!(
-        product_name => "Betterbroom",
-        product_description => "broom broom broom broom broom broom",
-        price => 29_240u64,
-        document_id => 1u64,
-        frame_id => 1u64,
-    ))?;
-    index_writer.add_document(doc!(
-        product_name => "Broomio",
-        product_description => "Great value for the price. This broom is a market favorite. What a broom! Super brooms.",
-        price => 21_240u64,
-        document_id => 2u64,
-        frame_id => 5u64,
-    ))?;
-    index_writer.add_document(doc!(
-        product_name => "Whack a Mole",
-        product_description => "Prime quality bat.",
-        price => 5_200u64,
-        document_id => 3u64,
-        frame_id => 6u64,
-    ))?;
-    index_writer.commit()?;
+        // # Indexing documents
+        //
+        // Lets index a bunch of fake documents for the sake of
+        // this example.
+        let index = Index::create_in_ram(schema);
 
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
-    let query_parser =
-        QueryParser::for_index(&index, vec![product_name, product_description]);
+        let mut index_writer = index.writer(50_000_000)?;
+        index_writer.add_document(doc!(
+            product_name => "Super Broom 2000",
+            product_description => "While it is ok for short distance travel, this broom \
+            was designed quiditch. It will up your game.",
+            price => 30_200u64,
+            document_id => 1u64,
+            frame_id => 1u64,
+        ))?;
+        index_writer.add_document(doc!(
+            product_name => "Turbulobroom",
+            product_description => "You might have heard of this broom before : it is the sponsor of the Wales team.\
+                You'll enjoy its sharp turns, and rapid acceleration",
+            price => 29_240u64,
+            document_id => 1u64,
+            frame_id => 2u64,
+        ))?;
+        index_writer.add_document(doc!(
+            product_name => "Not relevant",
+            product_description => "We don't care about floor-cleaning.",
+            price => 29_240u64,
+            document_id => 1u64,
+            frame_id => 1u64,
+        ))?;
+        index_writer.add_document(doc!(
+            product_name => "Betterbroom",
+            product_description => "broom broom broom broom broom broom",
+            price => 29_240u64,
+            document_id => 1u64,
+            frame_id => 1u64,
+        ))?;
+        index_writer.add_document(doc!(
+            product_name => "Broomio",
+            product_description => "Great value for the price. This broom is a market favorite. What a broom! Super brooms.",
+            price => 21_240u64,
+            document_id => 2u64,
+            frame_id => 5u64,
+        ))?;
+        index_writer.add_document(doc!(
+            product_name => "Whack a Mole",
+            product_description => "Prime quality bat.",
+            price => 5_200u64,
+            document_id => 3u64,
+            frame_id => 6u64,
+        ))?;
+        index_writer.commit()?;
 
-    // here we want to search for `broom` and use `StatsCollector` on the hits.
-    let query = query_parser.parse_query("broom")?;
+        let reader = index.reader()?;
+        let searcher = reader.searcher();
+        let query_parser =
+            QueryParser::for_index(&index, vec![product_name, product_description]);
 
-    let analysis_frame_ids = [1u64, 2u64, 5u64];
-    // https://docs.rs/pyo3/latest/pyo3/types/struct.PySet.html
-    let analysis_filter = BTreeSet::from(analysis_frame_ids);
+        // here we want to search for `broom` and use `StatsCollector` on the hits.
+        let query = query_parser.parse_query("broom")?;
 
-    if let Some(stats) = searcher.search(
-        &query,
-        &FilterCollector::new(
-            "frame_id__".to_string(),
-            move |value: u64| analysis_filter.contains(&value),
-            StatsCollector::new(),
-        ),
-    )? {
-        println!("{stats:?}");
+        let analysis_frame_ids = [1u64, 2u64, 5u64];
+        // https://docs.rs/pyo3/latest/pyo3/types/struct.PySet.html
+        let analysis_filter = BTreeSet::from(analysis_frame_ids);
+
+        if let Some(stats) = searcher.search(
+            &query,
+            &FilterCollector::new(
+                "frame_id__".to_string(),
+                move |value: u64| analysis_filter.contains(&value),
+                StatsCollector::new(),
+            ),
+        )? {
+            println!("{stats:?}");
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
