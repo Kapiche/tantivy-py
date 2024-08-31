@@ -146,7 +146,7 @@ mod tests {
             .add_u64_field("document_id__", STORED | INDEXED | FAST);
         let frame_id =
             schema_builder.add_u64_field("frame_id__", STORED | INDEXED | FAST);
-        let sentence_id = schema_builder
+        let _sentence_id = schema_builder
             .add_u64_field("sentence_id__", STORED | INDEXED | FAST);
         let schema = schema_builder.build();
 

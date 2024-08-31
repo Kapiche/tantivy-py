@@ -11,7 +11,6 @@ use pyo3::{
 use crate::facet::Facet;
 use crate::{
     document::{extract_value, Document},
-    filters::get_stopwords_filter_en,
     filters::outer_punctuation_filter::OuterPunctuationFilter,
     filters::possessive_contraction_filter::PossessiveContractionFilter,
     get_field,
@@ -33,7 +32,7 @@ use tantivy::{
     },
     tokenizer::{
         Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer,
-        StopWordFilter, TextAnalyzer, WhitespaceTokenizer,
+        TextAnalyzer, WhitespaceTokenizer,
     },
 };
 
@@ -167,7 +166,7 @@ impl IndexWriter {
     fn delete_documents_kapiche(
         &mut self,
         field_name: &str,
-        field_value: &PyAny,
+        field_value: &Bound<PyAny>,
     ) -> PyResult<u64> {
         let field = get_field(&self.schema, field_name)?;
         let field_value_type =
