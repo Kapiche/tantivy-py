@@ -92,14 +92,8 @@ fn tantivy(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<FieldType>()?;
 
     let version = tv::version();
-    m.add(
-        "__version__",
-        format!("{}.{}.{}", version.major, version.minor, version.patch),
-    )?;
+    m.add("__version__", version)?;
     m.add("__full_version__", tv::version_string())?;
-    m.add("__major__", version.major)?;
-    m.add("__minor__", version.minor)?;
-    m.add("__patch__", version.patch)?;
     m.add("__index_format_version__", version.index_format_version)?;
 
     m.add_wrapped(wrap_pymodule!(query_parser_error))?;
