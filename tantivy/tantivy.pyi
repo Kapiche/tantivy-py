@@ -439,7 +439,3 @@ class SnippetGenerator:
 
 __version__: str
 __full_version__: str
-__major__: int
-__minor__: int
-__patch__: int
-__index_format_version__: int
