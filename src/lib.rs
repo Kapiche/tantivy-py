@@ -91,10 +91,9 @@ fn tantivy(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Occur>()?;
     m.add_class::<FieldType>()?;
 
-    m.add("__version__", tantivy::version().to_string())?;
-    m.add("__full_version__", tantivy::version_string())?;
-
-    let version = tantivy::version();
+    let version = tv::version();
+    m.add("__version__", format!("{}.{}.{}", version.major, version.minor, version.patch))?;
+    m.add("__full_version__", tv::version_string())?;
     m.add("__major__", version.major)?;
     m.add("__minor__", version.minor)?;
     m.add("__patch__", version.patch)?;
