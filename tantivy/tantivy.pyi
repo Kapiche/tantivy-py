@@ -438,4 +438,3 @@ class SnippetGenerator:
         pass
 
 __version__: str
-__full_version__: str
