@@ -52,7 +52,7 @@ pub(crate) fn extract_value(any: &Bound<PyAny>) -> PyResult<Value> {
         return Ok(Value::Bytes(b));
     }
     if let Ok(dict) = any.downcast::<PyDict>() {
-        if let Ok(json) = pythonize::depythonize_bound(dict.clone().into_any())
+        if let Ok(json) = pythonize::depythonize(&dict.clone().into_any())
         {
             return Ok(Value::Object(json));
         }
@@ -129,7 +129,7 @@ pub(crate) fn extract_value_for_type(
                 any.downcast::<PyDict>()
                     .map_err(to_pyerr_for_type("Json", field_name, any))
                     .and_then(|dict| {
-                        pythonize::depythonize_bound(dict.clone().into_any())
+                        pythonize::depythonize(&dict.clone().into_any())
                             .map_err(to_pyerr_for_type("Json", field_name, any))
                     })?,
             )
@@ -204,7 +204,7 @@ fn object_to_py(
     py: Python,
     obj: &BTreeMap<String, Value>,
 ) -> PyResult<PyObject> {
-    let dict = PyDict::new_bound(py);
+    let dict = PyDict::new(py);
     for (k, v) in obj.iter() {
         dict.set_item(k, value_to_py(py, v)?)?;
     }
@@ -214,18 +214,18 @@ fn object_to_py(
 fn value_to_py(py: Python, value: &Value) -> PyResult<PyObject> {
     Ok(match value {
         Value::Null => py.None(),
-        Value::Str(text) => text.into_py(py),
-        Value::U64(num) => (*num).into_py(py),
-        Value::I64(num) => (*num).into_py(py),
-        Value::F64(num) => (*num).into_py(py),
-        Value::Bytes(b) => b.to_object(py),
+        Value::Str(text) => text.into_pyobject(py),
+        Value::U64(num) => (*num).into_pyobject(py),
+        Value::I64(num) => (*num).into_pyobject(py),
+        Value::F64(num) => (*num).into_pyobject(py),
+        Value::Bytes(b) => b.into_pyobject(py),
         Value::PreTokStr(_pretoken) => {
             // TODO implement me
             unimplemented!();
         }
         Value::Date(d) => {
             let utc = d.into_utc();
-            PyDateTime::new_bound(
+            PyDateTime::new(
                 py,
                 utc.year(),
                 utc.month() as u8,
@@ -236,16 +236,16 @@ fn value_to_py(py: Python, value: &Value) -> PyResult<PyObject> {
                 utc.microsecond(),
                 None,
             )?
-            .into_py(py)
+            .into_pyobject(py)
         }
-        Value::Facet(f) => Facet { inner: f.clone() }.into_py(py),
+        Value::Facet(f) => Facet { inner: f.clone() }.into_pyobject(py),
         Value::Array(_arr) => {
             // TODO implement me
             unimplemented!();
         }
         Value::Object(obj) => object_to_py(py, obj)?,
-        Value::Bool(b) => b.into_py(py),
-        Value::IpAddr(i) => (*i).to_string().into_py(py),
+        Value::Bool(b) => b.into_pyobject(py),
+        Value::IpAddr(i) => (*i).to_string().into_pyobject(py),
     })
 }
 
@@ -555,6 +555,7 @@ impl Document {
         Ok(document)
     }
 
+    #[pyo3(signature = (py_dict, schema=None))]
     fn extend(
         &mut self,
         py_dict: &Bound<PyDict>,
@@ -568,6 +569,7 @@ impl Document {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (py_dict, schema=None))]
     fn from_dict(
         py_dict: &Bound<PyDict>,
         schema: Option<&Schema>,
@@ -590,7 +592,7 @@ impl Document {
     /// For this reason, the dictionary, will associate
     /// a list of value for every field.
     fn to_dict(&self, py: Python) -> PyResult<PyObject> {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         for (key, values) in &self.field_values {
             let values_py: Vec<PyObject> = values
                 .iter()
@@ -707,7 +709,7 @@ impl Document {
             self.add_value(field_name, json_map);
             Ok(())
         } else if let Ok(json_map) =
-            pythonize::depythonize_bound::<JsonMap>(value.clone())
+            pythonize::depythonize::<JsonMap>(&value.clone())
         {
             self.add_value(field_name, json_map);
             Ok(())
@@ -805,15 +807,15 @@ impl Document {
         py: Python<'_>,
     ) -> PyObject {
         match op {
-            CompareOp::Eq => (self == other).into_py(py),
-            CompareOp::Ne => (self != other).into_py(py),
+            CompareOp::Eq => (self == other).into_pyobject(py),
+            CompareOp::Ne => (self != other).into_pyobject(py),
             _ => py.NotImplemented(),
         }
     }
 
     #[staticmethod]
     fn _internal_from_pythonized(serialized: &Bound<PyAny>) -> PyResult<Self> {
-        pythonize::depythonize_bound(serialized.clone()).map_err(to_pyerr)
+        pythonize::depythonize(&serialized.clone()).map_err(to_pyerr)
     }
 
     fn __reduce__<'a>(
@@ -822,13 +824,13 @@ impl Document {
     ) -> PyResult<Bound<'a, PyTuple>> {
         let serialized = pythonize::pythonize(py, &*slf).map_err(to_pyerr)?;
 
-        Ok(PyTuple::new_bound(
+        Ok(PyTuple::new(
             py,
             [
-                slf.into_py(py).getattr(py, "_internal_from_pythonized")?,
-                PyTuple::new_bound(py, [serialized]).to_object(py),
+                slf.into_pyobject(py)?.getattr(py)?,
+                PyTuple::new(py, [serialized]).inspect(py),
             ],
-        ))
+        )?)
     }
 }
 

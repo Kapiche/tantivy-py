@@ -6,7 +6,7 @@ use core::ops::Bound as OpsBound;
 use pyo3::{
     exceptions,
     prelude::*,
-    types::{PyAny, PyFloat, PyString, PyTuple},
+    types::{PyAny, PyFloat, PyString},
 };
 use tantivy as tv;
 
@@ -15,18 +15,16 @@ use tantivy as tv;
 struct OccurQueryPair(Occur, Query);
 
 impl<'source> FromPyObject<'source> for OccurQueryPair {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        let tuple = ob.downcast::<PyTuple>()?;
-        let occur = tuple.get_item(0)?.extract()?;
-        let query = tuple.get_item(1)?.extract()?;
+    fn extract_bound(ob: &Bound<'source, PyAny>) -> PyResult<Self> {
+        let (occur, query): (Occur, Query) = ob.extract()?;
 
         Ok(OccurQueryPair(occur, query))
     }
 }
 
 /// Tantivy's Occur
-#[pyclass(frozen, module = "tantivy.tantivy")]
-#[derive(Clone)]
+#[pyclass(frozen, module = "tantivy.tantivy", eq)]
+#[derive(Clone, PartialEq)]
 pub enum Occur {
     Must,
     Should,
@@ -67,6 +65,10 @@ impl Query {
 impl Query {
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!("Query({:?})", self.get()))
+    }
+
+    fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(format!("{:?}", self.inner) == format!("{:?}", other.inner))
     }
 
     /// Construct a Tantivy's TermQuery
@@ -223,6 +225,7 @@ impl Query {
 
     /// Construct a Tantivy's DisjunctionMaxQuery
     #[staticmethod]
+    #[pyo3(signature = (subqueries, tie_breaker=None))]
     pub(crate) fn disjunction_max_query(
         subqueries: Vec<Query>,
         tie_breaker: Option<Bound<PyFloat>>,

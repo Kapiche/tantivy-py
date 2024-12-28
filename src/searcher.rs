@@ -38,16 +38,16 @@ impl std::fmt::Debug for Fruit {
     }
 }
 
-impl ToPyObject for Fruit {
-    fn to_object(&self, py: Python) -> PyObject {
+impl IntoPyObject<'_, PyObject> for Fruit {
+    fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
-            Fruit::Score(s) => s.to_object(py),
-            Fruit::Order(o) => o.to_object(py),
+            Fruit::Score(s) => s.into_py(py),
+            Fruit::Order(o) => o.into_py(py),
         }
     }
 }
 
-#[pyclass(frozen, module = "tantivy.tantivy")]
+#[pyclass(frozen, module = "tantivy.tantivy", eq, eq_int)]
 #[derive(Clone, Copy, Deserialize, PartialEq, Serialize)]
 /// Enum representing the direction in which something should be sorted.
 pub(crate) enum Order {
@@ -81,6 +81,7 @@ pub(crate) struct SearchResult {
 #[pymethods]
 impl SearchResult {
     #[new]
+    #[pyo3(signature = (hits, count=None))]
     fn new(
         py: Python,
         hits: Vec<(PyObject, DocAddress)>,
@@ -111,8 +112,8 @@ impl SearchResult {
         py: Python<'_>,
     ) -> PyObject {
         match op {
-            CompareOp::Eq => (self == other).into_py(py),
-            CompareOp::Ne => (self != other).into_py(py),
+            CompareOp::Eq => (self == other).into_pyobject(py),
+            CompareOp::Ne => (self != other).into_pyobject(py),
             _ => py.NotImplemented(),
         }
     }
@@ -131,7 +132,7 @@ impl SearchResult {
         let ret: Vec<(PyObject, DocAddress)> = self
             .hits
             .iter()
-            .map(|(result, address)| (result.to_object(py), address.clone()))
+            .map(|(result, address)| (result.into_pyobject(py), address.clone()))
             .collect();
         Ok(ret)
     }
@@ -242,7 +243,7 @@ impl Searcher {
         query: &Query,
         agg: Py<PyDict>,
     ) -> PyResult<Py<PyDict>> {
-        let py_json = py.import_bound("json")?;
+        let py_json = py.import("json")?;
         let agg_query_str = py_json.call_method1("dumps", (agg,))?.to_string();
 
         let agg_str = py.allow_threads(move || {
@@ -341,8 +342,8 @@ impl DocAddress {
         py: Python<'_>,
     ) -> PyObject {
         match op {
-            CompareOp::Eq => (self == other).into_py(py),
-            CompareOp::Ne => (self != other).into_py(py),
+            CompareOp::Eq => (self == other).into_pyobject(py),
+            CompareOp::Ne => (self != other).into_pyobject(py),
             _ => py.NotImplemented(),
         }
     }

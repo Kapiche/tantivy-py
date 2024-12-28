@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tantivy as tv;
 
 /// Tantivy's Type
-#[pyclass(frozen, module = "tantivy.tantivy")]
+#[pyclass(frozen, module = "tantivy.tantivy", eq, eq_int)]
 #[derive(Clone, PartialEq)]
 pub(crate) enum FieldType {
     Text,
@@ -55,15 +55,15 @@ impl Schema {
         py: Python<'_>,
     ) -> PyObject {
         match op {
-            CompareOp::Eq => (self == other).into_py(py),
-            CompareOp::Ne => (self != other).into_py(py),
+            CompareOp::Eq => (self == other).into_pyobject(py),
+            CompareOp::Ne => (self != other).into_pyobject(py),
             _ => py.NotImplemented(),
         }
     }
 
     #[staticmethod]
     fn _internal_from_pythonized(serialized: &Bound<PyAny>) -> PyResult<Self> {
-        pythonize::depythonize_bound(serialized.clone()).map_err(to_pyerr)
+        pythonize::depythonize(&serialized.clone()).map_err(to_pyerr)
     }
 
     fn __reduce__<'a>(
@@ -71,13 +71,13 @@ impl Schema {
         py: Python<'a>,
     ) -> PyResult<Bound<'a, PyTuple>> {
         let serialized = pythonize::pythonize(py, &*slf).map_err(to_pyerr)?;
-
-        Ok(PyTuple::new_bound(
+        
+        Ok(PyTuple::new(
             py,
             [
-                slf.into_py(py).getattr(py, "_internal_from_pythonized")?,
-                PyTuple::new_bound(py, [serialized]).to_object(py),
+                slf.into_pyobject(py)?.getattr(py)?,
+                PyTuple::new(py, [serialized]).inspect(py),
             ],
-        ))
+        )?)
     }
 }

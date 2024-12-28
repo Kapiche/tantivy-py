@@ -89,8 +89,8 @@ impl Facet {
         py: Python<'_>,
     ) -> PyObject {
         match op {
-            CompareOp::Eq => (self == other).into_py(py),
-            CompareOp::Ne => (self != other).into_py(py),
+            CompareOp::Eq => (self == other).into_pyobject(py),
+            CompareOp::Ne => (self != other).into_pyobject(py),
             _ => py.NotImplemented(),
         }
     }
@@ -100,12 +100,12 @@ impl Facet {
         py: Python<'a>,
     ) -> PyResult<Bound<'a, PyTuple>> {
         let encoded_bytes = slf.inner.encoded_str().as_bytes().to_vec();
-        Ok(PyTuple::new_bound(
+        Ok(PyTuple::new(
             py,
             [
-                slf.into_py(py).getattr(py, "from_encoded")?,
-                PyTuple::new_bound(py, [encoded_bytes]).to_object(py),
+                slf.into_pyobject(py)?.getattr(py, "from_encoded")?,
+                PyTuple::new(py, [encoded_bytes]).to_object(py),
             ],
-        ))
+        )?)
     }
 }
