@@ -411,6 +411,22 @@ pub(crate) struct Index {
     reader: tv::IndexReader,
 }
 
+impl Index {
+    fn register_all_analyzers(index: &tv::Index) {
+        // Register custom text analyzers for various languages
+        Index::register_custom_text_analyzers(index);
+
+        // Register Kapiche tokenizers
+        let kapiche_tokenizer = kapiche_analyzer();
+        index
+            .tokenizers()
+            .register("kapiche_tokenizer", kapiche_tokenizer);
+        let kapiche_tokenizer_lower = kapiche_analyzer_lower();
+        index
+            .tokenizers()
+            .register("kapiche_tokenizer_lower", kapiche_tokenizer_lower);
+    }
+}
 
 #[pymethods]
 impl Index {
@@ -418,19 +434,7 @@ impl Index {
     fn open(py: Python, path: &str) -> PyResult<Index> {
         py.detach(move || {
             let index = tv::Index::open_in_dir(path).map_err(to_pyerr)?;
-
-            Index::register_custom_text_analyzers(&index);
-
-            // Register Kapiche Tokenizer
-            let kapiche_tokenizer = kapiche_analyzer();
-            index
-                .tokenizers()
-                .register("kapiche_tokenizer", kapiche_tokenizer);
-            let kapiche_tokenizer_lower = kapiche_analyzer_lower();
-            index
-                .tokenizers()
-                .register("kapiche_tokenizer_lower", kapiche_tokenizer_lower);
-
+            Index::register_all_analyzers(&index);
             let reader = index.reader().map_err(to_pyerr)?;
             Ok(Index { index, reader })
         })
@@ -465,18 +469,7 @@ impl Index {
                 None => tv::Index::create_in_ram(schema.inner.clone()),
             };
 
-            Index::register_custom_text_analyzers(&index);
-
-            // Register Kapiche tokenizer
-            let kapiche_tokenizer = kapiche_analyzer();
-            index
-                .tokenizers()
-                .register("kapiche_tokenizer", kapiche_tokenizer);
-            let kapiche_tokenizer_lower = kapiche_analyzer_lower();
-            index
-                .tokenizers()
-                .register("kapiche_tokenizer_lower", kapiche_tokenizer_lower);
-
+            Index::register_all_analyzers(&index);
             let reader = index.reader().map_err(to_pyerr)?;
             Ok(Index { index, reader })
         })
