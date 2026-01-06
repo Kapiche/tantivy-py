@@ -27,8 +27,8 @@ use schema::{FieldType, Schema};
 use schemabuilder::SchemaBuilder;
 use searcher::{DocAddress, Order, SearchResult, Searcher};
 use snippet::{Snippet, SnippetGenerator};
-use tokenizer::{Filter, TextAnalyzer, TextAnalyzerBuilder, Tokenizer};
 use tantivy_tokenizers::{kapiche_analyzer, kapiche_analyzer_lower};
+use tokenizer::{Filter, TextAnalyzer, TextAnalyzerBuilder, Tokenizer};
 
 /// Python bindings for the search engine library Tantivy.
 ///
