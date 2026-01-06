@@ -748,7 +748,6 @@ impl Index {
             self.index
                 .fast_field_tokenizer()
                 .register(name, analyzer.analyzer);
->>>>>>> upstream/master
         });
     }
 }

@@ -532,27 +532,4 @@ impl Query {
             .map_err(to_pyerr)?;
         Ok(Explanation::new(explanation))
     }
-
-    /// Explain how this query matches a given document.
-    ///
-    /// # Arguments
-    /// * `searcher` (Searcher): The searcher used to perform the search.
-    /// * `doc_address` (DocAddress): The address of the document to explain.
-    ///
-    /// # Returns
-    /// * `Explanation`: An object containing detailed information about how
-    ///                  the document matched the query, with a to_json() method.
-    ///
-    pub(crate) fn explain(
-        &self,
-        searcher: &Searcher,
-        doc_address: &DocAddress,
-    ) -> PyResult<Explanation> {
-        let tantivy_doc_address = doc_address.into();
-        let explanation = self
-            .inner
-            .explain(&searcher.inner, tantivy_doc_address)
-            .map_err(to_pyerr)?;
-        Ok(Explanation::new(explanation))
-    }
 }

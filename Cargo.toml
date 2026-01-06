@@ -23,6 +23,7 @@ futures = "0.3.31"
 pythonize = "0.26.0"
 serde = "1.0"
 serde_json = "1.0.148"
+fnv = "1.0.7"
 
 [dependencies.pyo3]
 version = "0.26.0"
