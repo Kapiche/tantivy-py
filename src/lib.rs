@@ -27,7 +27,10 @@ use schema::{FieldType, Schema};
 use schemabuilder::SchemaBuilder;
 use searcher::{DocAddress, Order, SearchResult, Searcher};
 use snippet::{Snippet, SnippetGenerator};
-use tantivy_tokenizers::{kapiche_analyzer, kapiche_analyzer_lower, kapiche_analyzer_lower_with_stopwords};
+use tantivy_tokenizers::{
+    kapiche_analyzer, kapiche_analyzer_lower,
+    kapiche_analyzer_lower_with_stopwords,
+};
 use tokenizer::{Filter, TextAnalyzer, TextAnalyzerBuilder, Tokenizer};
 
 /// Python bindings for the search engine library Tantivy.
@@ -107,7 +110,10 @@ fn tantivy(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_query_lenient, m)?)?;
     m.add_function(wrap_pyfunction!(kapiche_tokenizer_py, m)?)?;
     m.add_function(wrap_pyfunction!(kapiche_tokenizer_lower_py, m)?)?;
-    m.add_function(wrap_pyfunction!(kapiche_tokenizer_lower_with_stopwords_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        kapiche_tokenizer_lower_with_stopwords_py,
+        m
+    )?)?;
 
     m.add_wrapped(wrap_pymodule!(query_parser_error))?;
 
