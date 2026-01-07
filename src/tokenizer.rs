@@ -229,7 +229,7 @@ impl Filter {
     }
 }
 
-pub(crate) fn parse_language(lang: &str) -> Result<tvt::Language, String> {
+fn parse_language(lang: &str) -> Result<tvt::Language, String> {
     match lang.to_lowercase().as_str() {
         "arabic" => Ok(tvt::Language::Arabic),
         "danish" => Ok(tvt::Language::Danish),
