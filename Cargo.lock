@@ -1208,7 +1208,7 @@ dependencies = [
 [[package]]
 name = "tantivy-tokenizers"
 version = "0.1.0"
-source = "git+https://github.com/Kapiche/tantivy-tokenizers?tag=v0.2.0#fc71e379ab4b970e652fb22e9ae5bf22028e3c67"
+source = "git+https://github.com/Kapiche/tantivy-tokenizers?tag=v0.2.0#87e3f1c7fdb36192b9ba0e42cc1b840448d4199e"
 dependencies = [
  "tantivy 0.25.0",
  "unicode-properties",
