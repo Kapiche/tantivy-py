@@ -243,8 +243,8 @@ fn kapiche_tokenizer_lower_with_stopwords_py() -> TextAnalyzer {
         )
         .filter(LowerCaser)
         .filter(OuterPunctuationFilter::new(vec!['#', '@']))
-        .filter(PossessiveContractionFilter)
         .filter(StopWordFilter::remove(stopwords))
+        .filter(PossessiveContractionFilter)
         .build(),
     }
 }

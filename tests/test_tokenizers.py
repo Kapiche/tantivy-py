@@ -68,6 +68,16 @@ class TestKapicheTokenizerWithStopwords:
         tokens = analyzer.analyze("THE QUICK")
         assert tokens == ["quick"]
 
+    def test_unicode_apostrophe_stopwords(self):
+        """Test that stopwords with curly quotes and other unicode apostrophes are caught"""
+        analyzer = tantivy.kapiche_tokenizer_lower_with_stopwords()
+        # U+2019 RIGHT SINGLE QUOTATION MARK (curly quote)
+        tokens = analyzer.analyze("I don\u2019t like purple elephants")
+        assert tokens == ["like", "purple", "elephants"]
+        # U+02BC MODIFIER LETTER APOSTROPHE
+        tokens = analyzer.analyze("She can\u02BCt find green frogs")
+        assert tokens == ["green", "frogs"]
+
 
 class TestCountTokens:
     """Tests for TextAnalyzer.count_tokens()"""
