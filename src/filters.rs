@@ -43,7 +43,7 @@ fn replace_apostrophes(s: &str, replacement: char) -> String {
 fn expand_stopwords_with_apostrophe_variants(
     base_stopwords: &[&str],
 ) -> Vec<String> {
-    let mut expanded = Vec::new();
+    let mut expanded = Vec::with_capacity(base_stopwords.len());
 
     for word in base_stopwords {
         if contains_apostrophe(word) {

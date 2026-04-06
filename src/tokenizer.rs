@@ -43,10 +43,7 @@ impl TextAnalyzer {
         if unique {
             let mut seen = std::collections::HashSet::new();
             while token_stream.advance() {
-                let token = token_stream.token();
-                if !seen.contains(token.text.as_str()) {
-                    seen.insert(token.text.to_string());
-                }
+                seen.insert(token_stream.token().text.clone());
             }
             seen.len()
         } else {
