@@ -13,6 +13,7 @@ mod schemabuilder;
 mod searcher;
 mod searcher_frame_document;
 mod snippet;
+mod tokenizer;
 
 use document::Document;
 use facet::Facet;
@@ -22,6 +23,7 @@ use schema::Schema;
 use schemabuilder::SchemaBuilder;
 use searcher::{DocAddress, Order, SearchResult, Searcher};
 use snippet::{Snippet, SnippetGenerator};
+use tokenizer::TextAnalyzer;
 
 /// Python bindings for the search engine library Tantivy.
 ///
@@ -87,6 +89,15 @@ fn tantivy(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Query>()?;
     m.add_class::<Snippet>()?;
     m.add_class::<SnippetGenerator>()?;
+    m.add_class::<TextAnalyzer>()?;
+
+    m.add_function(wrap_pyfunction!(kapiche_tokenizer_py, m)?)?;
+    m.add_function(wrap_pyfunction!(kapiche_tokenizer_lower_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        kapiche_tokenizer_lower_with_stopwords_py,
+        m
+    )?)?;
+
     m.add_wrapped(wrap_pymodule!(query_parser_error))?;
 
     Ok(())
@@ -153,4 +164,87 @@ pub(crate) fn get_field(
     })?;
 
     Ok(field)
+}
+
+use filters::outer_punctuation_filter::OuterPunctuationFilter;
+use filters::possessive_contraction_filter::PossessiveContractionFilter;
+use tv::tokenizer::{
+    LowerCaser, StopWordFilter, WhitespaceTokenizer,
+};
+
+/// Create a Kapiche text analyzer.
+///
+/// This analyzer is configured with specific tokenization and filtering
+/// rules used by Kapiche for text analysis.
+///
+/// Returns:
+///     TextAnalyzer: A configured text analyzer instance.
+///
+/// Example:
+///     >>> analyzer = tantivy.kapiche_tokenizer()
+///     >>> tokens = analyzer.analyze("Hello World")
+#[pyfunction(name = "kapiche_tokenizer")]
+fn kapiche_tokenizer_py() -> TextAnalyzer {
+    TextAnalyzer {
+        analyzer: tv::tokenizer::TextAnalyzer::builder(
+            WhitespaceTokenizer::default(),
+        )
+        .filter(OuterPunctuationFilter::new(vec!['#', '@']))
+        .filter(PossessiveContractionFilter)
+        .build(),
+    }
+}
+
+/// Create a Kapiche text analyzer with lowercase normalization.
+///
+/// This analyzer is similar to kapiche_tokenizer() but includes
+/// lowercase normalization of tokens.
+///
+/// Returns:
+///     TextAnalyzer: A configured text analyzer instance with lowercase filter.
+///
+/// Example:
+///     >>> analyzer = tantivy.kapiche_tokenizer_lower()
+///     >>> tokens = analyzer.analyze("Hello World")
+///     >>> # tokens will be lowercased
+#[pyfunction(name = "kapiche_tokenizer_lower")]
+fn kapiche_tokenizer_lower_py() -> TextAnalyzer {
+    TextAnalyzer {
+        analyzer: tv::tokenizer::TextAnalyzer::builder(
+            WhitespaceTokenizer::default(),
+        )
+        .filter(LowerCaser)
+        .filter(OuterPunctuationFilter::new(vec!['#', '@']))
+        .filter(PossessiveContractionFilter)
+        .build(),
+    }
+}
+
+/// Create a Kapiche text analyzer with lowercase normalization and stopword filtering.
+///
+/// This analyzer is similar to kapiche_tokenizer_lower() but includes
+/// stopword filtering using Kapiche's custom 334-word English stopword list.
+/// Use this for token counting and topic modeling.
+/// For search indexing, use kapiche_tokenizer_lower() instead.
+///
+/// Returns:
+///     TextAnalyzer: A configured text analyzer instance with stopword filtering.
+///
+/// Example:
+///     >>> analyzer = tantivy.kapiche_tokenizer_lower_with_stopwords()
+///     >>> count = analyzer.count_tokens("the quick brown fox", unique=True)
+///     >>> # count = 3 ("the" is removed as stopword)
+#[pyfunction(name = "kapiche_tokenizer_lower_with_stopwords")]
+fn kapiche_tokenizer_lower_with_stopwords_py() -> TextAnalyzer {
+    let stopwords = filters::get_stopwords_filter_en();
+    TextAnalyzer {
+        analyzer: tv::tokenizer::TextAnalyzer::builder(
+            WhitespaceTokenizer::default(),
+        )
+        .filter(LowerCaser)
+        .filter(OuterPunctuationFilter::new(vec!['#', '@']))
+        .filter(PossessiveContractionFilter)
+        .filter(StopWordFilter::remove(stopwords))
+        .build(),
+    }
 }
