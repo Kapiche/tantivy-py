@@ -888,6 +888,27 @@ def test_bytes(bytes_kwarg, bytes_payload):
     index.reload()
 
 
+def test_bytes_term_query():
+    schema = (
+        SchemaBuilder()
+        .add_bytes_field("data", indexed=True)
+        .build()
+    )
+    index = Index(schema)
+    writer = index.writer()
+
+    doc1 = Document(data=b"\x01\x02\x03")
+    doc2 = Document(data=b"\x04\x05\x06")
+    writer.add_document(doc1)
+    writer.add_document(doc2)
+    writer.commit()
+    index.reload()
+
+    query = Query.term_query(schema, "data", b"\x01\x02\x03")
+    result = index.searcher().search(query, 10)
+    assert len(result.hits) == 1
+
+
 def test_schema_eq():
     schema1 = build_schema()
     schema2 = build_schema()
@@ -1003,11 +1024,9 @@ class TestQuery(object):
         result = index.searcher().search(query, 10)
         assert len(result.hits) == 0
 
-        # Should fail to create the query due to the invalid list object in the terms list
-        with pytest.raises(
-            ValueError, match=r"Can't create a term for Field `title` with value `\[\]`"
-        ):
-            terms = ["old", [], "man"]
+        # Should fail to create the query due to the invalid object in the terms list
+        with pytest.raises(ValueError):
+            terms = ["old", object(), "man"]
             query = Query.term_set_query(index.schema, "title", terms)
 
     def test_all_query(self, ram_index):
@@ -1023,6 +1042,26 @@ class TestQuery(object):
 
         result = index.searcher().search(query, 10)
         assert len(result.hits) == 0
+
+    def test_exists_query(self, index_with_empty_fast_field):
+        index = index_with_empty_fast_field
+        query = Query.exists_query("body")
+
+        result = index.searcher().search(query, 10)
+        assert len(result.hits) == 1
+
+    def test_not_exists_query(self, index_with_empty_fast_field):
+        index = index_with_empty_fast_field
+        query = Query.boolean_query(
+            [
+                (Occur.Must, Query.all_query()),
+                (Occur.MustNot, Query.exists_query("body")),
+            ]
+        )
+
+        result = index.searcher().search(query, 10)
+        assert len(result.hits) == 2
+
 
     def test_phrase_query(self, ram_index):
         index = ram_index
@@ -1176,7 +1215,13 @@ class TestQuery(object):
         result = index.searcher().search(query, 10)
         assert len(result.hits) == 0
 
-        query = Query.boolean_query([(Occur.Should, query1), (Occur.Should, query2)])
+        query = Query.boolean_query([(Occur.Should, query1), (Occur.Should, query2)], minimum_number_should_match=2)
+
+        # it's possible to specify that both queries should match with the minimum_number_should_match argument
+        result = index.searcher().search(query, 10)
+        assert len(result.hits) == 0
+
+        query = Query.boolean_query([(Occur.Should, query1), (Occur.Should, query2)], minimum_number_should_match=1)
 
         # two documents should match, one for each query
         result = index.searcher().search(query, 10)
@@ -1404,6 +1449,80 @@ class TestQuery(object):
         )
         result = index.searcher().search(mlt_query, 10)
         assert len(result.hits) > 0
+
+    def test_more_like_this_document_fields_query(self):
+        schema = (
+            SchemaBuilder()
+            .add_unsigned_field("id", stored=True, indexed=True)
+            .add_text_field("title")
+            .add_text_field("body")
+            .build()
+        )
+        index = Index(schema)
+        writer = index.writer()
+        writer.add_document(
+            Document.from_dict(
+                {
+                    "id": 1,
+                    "title": "aaa",
+                    "body": "the old man and the sea",
+                },
+                schema,
+            )
+        )
+        writer.add_document(
+            Document.from_dict(
+                {
+                    "id": 2,
+                    "title": "bbb",
+                    "body": "an old man sailing on the sea",
+                },
+                schema,
+            )
+        )
+        writer.add_document(
+            Document.from_dict(
+                {
+                    "id": 3,
+                    "title": "ccc",
+                    "body": "send this message to alice",
+                },
+                schema,
+            )
+        )
+        writer.commit()
+        writer.wait_merging_threads()
+        index.reload()
+
+        query_document_fields = {
+            "title": "aaa",
+            "body": "the old man and the sea",
+        }
+        mlt_query = Query.more_like_this_document_fields_query(
+            schema,
+            query_document_fields,
+            min_doc_frequency=1,
+            min_term_frequency=1,
+            max_query_terms=10,
+        )
+        assert "target: DocumentFields(" in repr(mlt_query)
+
+        result = index.searcher().search(mlt_query, 10)
+        hit_ids = {
+            index.searcher().doc(doc_address)["id"][0]
+            for _, doc_address in result.hits
+        }
+        assert hit_ids == {1, 2}
+
+    def test_more_like_this_document_fields_query_rejects_unknown_fields(self, ram_index):
+        index = ram_index
+        query_document_fields = {"unknown_field": "value"}
+
+        with pytest.raises(
+            ValueError, match="Field `unknown_field` is not defined in the schema."
+        ):
+            Query.more_like_this_document_fields_query(index.schema, query_document_fields)
+
 
     def test_const_score_query(self, ram_index):
         index = ram_index
@@ -1634,6 +1753,58 @@ class TestQuery(object):
         ):
             Query.range_query(index.schema, "title", FieldType.Facet, 1, 2)
 
+    def test_term_query_unsigned_field(self):
+        """term_query must correctly match documents on unsigned (u64) fields.
+
+        Previously, make_term() used extract_value() which always inferred
+        Python integers as i64.  For a u64 schema field this produced a
+        mistyped Term that never matched any document, silently returning 0
+        hits regardless of the value passed.
+        """
+        schema = (
+            SchemaBuilder()
+            .add_unsigned_field("uid", stored=True, indexed=True)
+            .add_text_field("body", stored=True)
+            .build()
+        )
+        index = Index(schema, None)
+        with index.writer(15_000_000, 1) as writer:
+            doc = Document()
+            doc.add_unsigned("uid", 1)
+            doc.add_text("body", "hello world")
+            writer.add_document(doc)
+
+            doc = Document()
+            doc.add_unsigned("uid", 2)
+            doc.add_text("body", "goodbye world")
+            writer.add_document(doc)
+
+        index.reload()
+        searcher = index.searcher()
+
+        # Exact match on a u64 field -- previously always returned 0 hits.
+        query = Query.term_query(index.schema, "uid", 1)
+        result = searcher.search(query, 10)
+        assert len(result.hits) == 1, (
+            "term_query on a u64 field returned no hits; "
+            "integer was likely extracted as i64"
+        )
+        _, doc_address = result.hits[0]
+        assert searcher.doc(doc_address)["uid"][0] == 1
+
+        # Second value also resolves correctly.
+        query = Query.term_query(index.schema, "uid", 2)
+        result = searcher.search(query, 10)
+        assert len(result.hits) == 1
+        _, doc_address = result.hits[0]
+        assert searcher.doc(doc_address)["uid"][0] == 2
+
+        # Non-existent value returns no hits.
+        query = Query.term_query(index.schema, "uid", 999)
+        result = searcher.search(query, 10)
+        assert len(result.hits) == 0
+
+
 
 class TestTokenizers:
     def test_build_and_register_simple_tokenizer(self):
@@ -1656,6 +1827,7 @@ class TestTokenizers:
         index = tantivy.Index(schema)
         index.register_tokenizer("custom_analyzer", custom_analyzer)
         index.register_fast_field_tokenizer("custom_analyzer", custom_analyzer)
+
 
         writer = index.writer()
         doc = Document(content=doc_text)

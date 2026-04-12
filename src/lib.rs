@@ -17,7 +17,7 @@ mod searcher_frame_document;
 mod snippet;
 mod tokenizer;
 
-use document::{extract_value, extract_value_for_type, Document};
+use document::{extract_value_for_type, Document};
 use explanation::Explanation;
 use facet::Facet;
 use index::{Index, IndexWriter};
@@ -192,7 +192,12 @@ pub(crate) fn make_term(
     field_value: &Bound<PyAny>,
 ) -> PyResult<tv::Term> {
     let field = get_field(schema, field_name)?;
-    let value = extract_value(field_value)?;
+    // Look up the actual field type from the schema so that Python integers
+    // are extracted as the correct numeric type (u64 vs i64).  The generic
+    // extract_value() path always infers integers as i64 because Python ints
+    // have no inherent type, which silently produces wrong terms for u64 fields.
+    let field_type = schema.get_field_entry(field).field_type().value_type();
+    let value = extract_value_for_type(field_value, field_type, field_name)?;
     let term = match value {
         Value::Str(text) => Term::from_field_text(field, &text),
         Value::U64(num) => Term::from_field_u64(field, num),
@@ -202,6 +207,7 @@ pub(crate) fn make_term(
         Value::Facet(facet) => Term::from_facet(field, &facet),
         Value::Bool(b) => Term::from_field_bool(field, b),
         Value::IpAddr(i) => Term::from_field_ip_addr(field, i),
+        Value::Bytes(ref bytes) => Term::from_field_bytes(field, bytes),
         _ => {
             return Err(exceptions::PyValueError::new_err(format!(
                 "Can't create a term for Field `{field_name}` with value `{field_value}`."
@@ -230,6 +236,7 @@ pub(crate) fn make_term_for_type(
         Value::Facet(facet) => Term::from_facet(field, &facet),
         Value::Bool(b) => Term::from_field_bool(field, b),
         Value::IpAddr(i) => Term::from_field_ip_addr(field, i),
+        Value::Bytes(ref bytes) => Term::from_field_bytes(field, bytes),
         _ => {
             return Err(exceptions::PyValueError::new_err(format!(
                 "Can't create a term for Field `{field_name}` with value `{field_value}`."

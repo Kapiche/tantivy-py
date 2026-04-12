@@ -197,6 +197,19 @@ impl IndexWriter {
     /// `delete_documents_by_query` method instead, which will delete documents
     /// matching the given query using the same query parser as used in search queries.
     ///
+    /// This method does not parse the given term and it expects the term to be
+    /// already tokenized according to any tokenizers attached to the field. This
+    /// can often result in surprising behaviour. For example, if you want to store
+    /// UUIDs as text in a field, and those values have hyphens, and you use the
+    /// default tokenizer which removes punctuation, you will not be able to delete
+    /// a document added with particular UUID, by passing the same UUID to this
+    /// method. In such workflows where deletions are required, particularly with
+    /// string values, it is strongly recommended to use the
+    /// "raw" tokenizer as this will match exactly. In situations where you do
+    /// want tokenization to be applied, it is recommended to instead use the
+    /// `delete_documents_by_query` method instead, which will delete documents
+    /// matching the given query using the same query parser as used in search queries.
+    ///
     /// Args:
     ///     field_name (str): The field name for which we want to filter deleted docs.
     ///     field_value (PyAny): Python object with the value we want to filter.
@@ -205,6 +218,7 @@ impl IndexWriter {
     /// If the field_value is not supported raises Exception.
     fn delete_documents_kapiche(
         &mut self,
+        py: Python,
         field_name: &str,
         field_value: &Bound<PyAny>,
     ) -> PyResult<u64> {
@@ -448,6 +462,7 @@ impl Index {
         py.detach(move || {
             let index = tv::Index::open_in_dir(path).map_err(to_pyerr)?;
             Index::register_all_analyzers(&index);
+
             let reader = index.reader().map_err(to_pyerr)?;
             Ok(Index { index, reader })
         })
@@ -483,6 +498,7 @@ impl Index {
             };
 
             Index::register_all_analyzers(&index);
+
             let reader = index.reader().map_err(to_pyerr)?;
             Ok(Index { index, reader })
         })

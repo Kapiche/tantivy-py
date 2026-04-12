@@ -1,7 +1,7 @@
 import datetime
 from enum import Enum
 from types import TracebackType
-from typing import Any, Optional, Sequence, TypeVar, Union
+from typing import Any, Optional, Sequence, TypeAlias, TypeVar, Union
 from typing_extensions import Self
 
 
@@ -219,6 +219,8 @@ _RangeType = TypeVar(
     "_RangeType", bound=int | float | datetime.datetime | bool | str | bytes
 )
 
+DocumentFieldInput: TypeAlias = dict[str, Any | list[Any]]
+
 
 class Query:
     @staticmethod
@@ -242,6 +244,12 @@ class Query:
 
     @staticmethod
     def empty_query() -> Query:
+        pass
+
+    @staticmethod
+    def exists_query(
+        fast_field_name: str, json_subpaths: bool = False
+        ) -> Query:
         pass
 
     @staticmethod
@@ -282,7 +290,10 @@ class Query:
         pass
 
     @staticmethod
-    def boolean_query(subqueries: Sequence[tuple[Occur, Query]]) -> Query:
+    def boolean_query(
+        subqueries: Sequence[tuple[Occur, Query]],
+        minimum_number_should_match: int | None = None,
+    ) -> Query:
         pass
 
     @staticmethod
@@ -290,6 +301,7 @@ class Query:
         subqueries: Sequence[Query], tie_breaker: Optional[float] = None
     ) -> Query:
         pass
+
 
     @staticmethod
     def boost_query(query: Query, boost: float) -> Query:
@@ -302,6 +314,21 @@ class Query:
     @staticmethod
     def more_like_this_query(
         doc_address: DocAddress,
+        min_doc_frequency: Optional[int] = 5,
+        max_doc_frequency: Optional[int] = None,
+        min_term_frequency: Optional[int] = 2,
+        max_query_terms: Optional[int] = 25,
+        min_word_length: Optional[int] = None,
+        max_word_length: Optional[int] = None,
+        boost_factor: Optional[float] = 1.0,
+        stop_words: list[str] = [],
+    ) -> Query:
+        pass
+
+    @staticmethod
+    def more_like_this_document_fields_query(
+        schema: Schema,
+        document_fields: DocumentFieldInput,
         min_doc_frequency: Optional[int] = 5,
         max_doc_frequency: Optional[int] = None,
         min_term_frequency: Optional[int] = 2,
@@ -372,6 +399,7 @@ class Searcher:
         order_by_field: Optional[str] = None,
         offset: int = 0,
         order: Order = Order.Desc,
+        weight_by_field: str | None = None,
     ) -> SearchResult:
         pass
 
@@ -428,6 +456,7 @@ class IndexWriter:
 
     def delete_documents_kapiche(self, field_name: str, field_value: Any) -> int:
         pass
+
 
     def delete_documents_by_term(self, field_name: str, field_value: Any) -> int:
         pass
@@ -509,6 +538,7 @@ class Index:
     def register_fast_field_tokenizer(
         self, name: str, text_analyzer: TextAnalyzer
     ) -> None: ...
+
 
 class Range:
     @property
@@ -615,6 +645,7 @@ class TextAnalyzer:
         pass
 
 
+
 class TextAnalyzerBuilder:
     def __init__(self, tokenizer: Tokenizer):
         pass
@@ -691,5 +722,6 @@ def kapiche_tokenizer_lower_with_stopwords() -> TextAnalyzer:
         TextAnalyzer: A configured text analyzer instance with stopword filtering.
     """
     pass
+
 
 __version__: str
