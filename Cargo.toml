@@ -28,3 +28,9 @@ fnv = "1.0.7"
 [dependencies.pyo3]
 version = "0.26.0"
 features = ["chrono", "extension-module"]
+
+# Override tantivy's `tantivy-query-grammar` with our vendored copy, which
+# patches an exponential-backtracking bug in the top-level `ast()` parser.
+# See ./tantivy-query-grammar/src/query_grammar.rs for the patch.
+[patch.crates-io]
+tantivy-query-grammar = { path = "tantivy-query-grammar" }

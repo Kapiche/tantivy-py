@@ -2,6 +2,8 @@
 **/*.pyc
 build
 /target
+/tantivy-query-grammar/target
+/tantivy-query-grammar/Cargo.lock
 **/*.rs.bk
 dist/
 __pycache__/
