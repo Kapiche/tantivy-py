@@ -31,6 +31,10 @@ enum Fruit {
     Score(f32),
     #[pyo3(transparent)]
     Order(u64),
+    #[pyo3(transparent)]
+    OrderI64(i64),
+    #[pyo3(transparent)]
+    OrderF64(f64),
 }
 
 impl std::fmt::Debug for Fruit {
@@ -38,6 +42,8 @@ impl std::fmt::Debug for Fruit {
         match self {
             Fruit::Score(s) => f.write_str(&format!("{s}")),
             Fruit::Order(o) => f.write_str(&format!("{o}")),
+            Fruit::OrderI64(o) => f.write_str(&format!("{o}")),
+            Fruit::OrderF64(o) => f.write_str(&format!("{o}")),
         }
     }
 }
@@ -293,7 +299,7 @@ impl Searcher {
                     let tv_order: tv::Order = order.into();
 
                     macro_rules! run_order_by_fast {
-                        ($t:ty, $to_u64:expr) => {{
+                        ($t:ty, $to_fruit:expr) => {{
                             let typed_collector = collector
                                 .order_by_fast_field::<$t>(order_by, tv_order);
                             let top_docs_handle =
@@ -309,9 +315,8 @@ impl Searcher {
                                         top_docs
                                             .iter()
                                             .map(|(f, d)| {
-                                                let v: u64 = $to_u64(*f);
                                                 (
-                                                    Fruit::Order(v),
+                                                    $to_fruit(*f),
                                                     DocAddress::from(d),
                                                 )
                                             })
@@ -329,25 +334,29 @@ impl Searcher {
 
                     match field_type {
                         tv::schema::Type::U64 => {
-                            run_order_by_fast!(u64, |v: Option<u64>| v
-                                .unwrap_or(0))
+                            run_order_by_fast!(u64, |v: Option<u64>| {
+                                Fruit::Order(v.unwrap_or(0))
+                            })
                         }
                         tv::schema::Type::I64 => {
-                            run_order_by_fast!(i64, |v: Option<i64>| v
-                                .unwrap_or(0)
-                                as u64)
+                            run_order_by_fast!(i64, |v: Option<i64>| {
+                                Fruit::OrderI64(v.unwrap_or(0))
+                            })
                         }
                         tv::schema::Type::F64 => {
-                            run_order_by_fast!(f64, |v: Option<f64>| v
-                                .unwrap_or(0.0)
-                                .to_bits())
+                            run_order_by_fast!(f64, |v: Option<f64>| {
+                                Fruit::OrderF64(v.unwrap_or(0.0))
+                            })
                         }
                         tv::schema::Type::Date => {
                             run_order_by_fast!(
                                 tv::DateTime,
-                                |v: Option<tv::DateTime>| v
-                                    .map(|d| d.into_timestamp_micros() as u64)
-                                    .unwrap_or(0)
+                                |v: Option<tv::DateTime>| {
+                                    Fruit::OrderI64(
+                                        v.map(|d| d.into_timestamp_micros())
+                                            .unwrap_or(0),
+                                    )
+                                }
                             )
                         }
                         _ => {
