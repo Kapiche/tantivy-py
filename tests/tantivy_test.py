@@ -315,17 +315,10 @@ class TestClass(object):
         )
 
         index = Index(schema)
-        writer = index.writer()
-
-        doc = Document()
-        doc.add_unsigned("order", 0)
-        doc.add_text("title", "Test title")
-
         query = index.parse_query("test")
-
         searcher = index.searcher()
-        result = searcher.search(query, 10, order_by_field="order")
-        assert len(result.hits) == 0
+        with pytest.raises(ValueError, match="not a fast field"):
+            searcher.search(query, 10, order_by_field="order")
 
     def test_query_explain(self, ram_index):
         index: Index = ram_index

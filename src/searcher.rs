@@ -283,28 +283,81 @@ impl Searcher {
                         }
                     }
                 } else if let Some(order_by) = order_by_field {
-                    let collector =
-                        collector.order_by_u64_field(order_by, order.into());
-                    let top_docs_handle =
-                        multicollector.add_collector(collector);
-                    let ret = self.inner.search(query.get(), &multicollector);
+                    let schema = self.inner.schema();
+                    let field = crate::get_field(schema, order_by)
+                        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                    let field_type = schema
+                        .get_field_entry(field)
+                        .field_type()
+                        .value_type();
+                    let tv_order: tv::Order = order.into();
 
-                    match ret {
-                        Ok(mut r) => {
-                            let top_docs = top_docs_handle.extract(&mut r);
-                            let result: Vec<(Fruit, DocAddress)> = top_docs
-                                .iter()
-                                .map(|(f, d)| {
-                                    (Fruit::Order(*f), DocAddress::from(d))
-                                })
-                                .collect();
-                            (r, result)
+                    macro_rules! run_order_by_fast {
+                        ($t:ty, $to_u64:expr) => {{
+                            let typed_collector = collector
+                                .order_by_fast_field::<$t>(order_by, tv_order);
+                            let top_docs_handle =
+                                multicollector.add_collector(typed_collector);
+                            let ret = self
+                                .inner
+                                .search(query.get(), &multicollector);
+                            match ret {
+                                Ok(mut r) => {
+                                    let top_docs =
+                                        top_docs_handle.extract(&mut r);
+                                    let result: Vec<(Fruit, DocAddress)> =
+                                        top_docs
+                                            .iter()
+                                            .map(|(f, d)| {
+                                                let v: u64 = $to_u64(*f);
+                                                (
+                                                    Fruit::Order(v),
+                                                    DocAddress::from(d),
+                                                )
+                                            })
+                                            .collect();
+                                    (r, result)
+                                }
+                                Err(e) => {
+                                    return Err(PyValueError::new_err(
+                                        e.to_string(),
+                                    ))
+                                }
+                            }
+                        }};
+                    }
+
+                    match field_type {
+                        tv::schema::Type::U64 => {
+                            run_order_by_fast!(u64, |v: Option<u64>| v
+                                .unwrap_or(0))
                         }
-                        Err(e) => {
-                            return Err(PyValueError::new_err(e.to_string()))
+                        tv::schema::Type::I64 => {
+                            run_order_by_fast!(i64, |v: Option<i64>| v
+                                .unwrap_or(0)
+                                as u64)
+                        }
+                        tv::schema::Type::F64 => {
+                            run_order_by_fast!(f64, |v: Option<f64>| v
+                                .unwrap_or(0.0)
+                                .to_bits())
+                        }
+                        tv::schema::Type::Date => {
+                            run_order_by_fast!(
+                                tv::DateTime,
+                                |v: Option<tv::DateTime>| v
+                                    .map(|d| d.into_timestamp_micros() as u64)
+                                    .unwrap_or(0)
+                            )
+                        }
+                        _ => {
+                            return Err(PyValueError::new_err(format!(
+                                "Field '{order_by}' has unsupported type for ordering"
+                            )))
                         }
                     }
                 } else {
+                    let collector = collector.order_by_score();
                     let top_docs_handle =
                         multicollector.add_collector(collector);
                     let ret = self.inner.search(query.get(), &multicollector);

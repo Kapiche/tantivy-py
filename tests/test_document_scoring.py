@@ -1,5 +1,4 @@
 from tantivy.tantivy import Document, Index, SchemaBuilder
-from tests.conftest import build_schema_numeric_fields
 import pytest
 
 
