@@ -16,6 +16,9 @@ optional-dependencies = { dev = ["nox"] }
 
 [tool.maturin]
 bindings = "pyo3"
+include = [
+    { path = "tantivy-query-grammar/**/*", format = "sdist" },
+]
 
 [tool.pytest.ini_options]
 # Set the durations option and doctest modules
