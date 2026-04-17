@@ -518,6 +518,7 @@ class Index:
         field_boosts: Optional[dict[str, float]] = None,
         fuzzy_fields: Optional[dict[str, tuple[bool, int, bool]]] = None,
         conjunction_by_default: bool = False,
+        allow_regexes: bool = False
     ) -> Query:
         pass
 
@@ -528,6 +529,7 @@ class Index:
         field_boosts: Optional[dict[str, float]] = None,
         fuzzy_fields: Optional[dict[str, tuple[bool, int, bool]]] = None,
         conjunction_by_default: bool = False,
+        allow_regexes: bool = False,
     ) -> tuple[Query, list[Any]]:
         pass
 
