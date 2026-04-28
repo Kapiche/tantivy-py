@@ -343,7 +343,7 @@ impl Searcher {
 
                     // Get field type from schema
                     let schema = self.inner.schema();
-                    let field = crate::get_field(&schema, &weight_by_field)
+                    let field = crate::get_field(schema, &weight_by_field)
                         .map_err(|e| PyValueError::new_err(e.to_string()))?;
                     let field_entry = schema.get_field_entry(field);
                     let field_type = field_entry.field_type().value_type();
@@ -762,7 +762,7 @@ impl Searcher {
         limit: Option<usize>,
     ) -> PyResult<Vec<(String, u32)>> {
         let schema = self.inner.schema();
-        let field = crate::get_field(&schema, field_name)?;
+        let field = crate::get_field(schema, field_name)?;
         if !matches!(
             schema.get_field_entry(field).field_type().value_type(),
             Type::Str
