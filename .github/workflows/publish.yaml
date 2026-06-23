@@ -29,6 +29,7 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             astral.sh:443
+            releases.astral.sh:443
             cdn.quay.io:443
             cdn01.quay.io:443
             cdn02.quay.io:443
