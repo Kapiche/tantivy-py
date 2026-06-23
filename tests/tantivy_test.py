@@ -2439,6 +2439,24 @@ class TestFastFieldValues:
         with pytest.raises(ValueError, match="unsupported type"):
             searcher.fast_field_values("tag", addrs)
 
+    def test_invalid_segment_ord_raises(self, fast_index):
+        """ValueError for a DocAddress with an out-of-range segment_ord."""
+        from tantivy import DocAddress
+
+        searcher = fast_index.searcher()
+        bad = DocAddress(searcher.num_segments + 5, 0)
+        with pytest.raises(ValueError, match="Invalid segment_ord"):
+            searcher.fast_field_values("score", [bad])
+
+    def test_invalid_doc_id_raises(self, fast_index):
+        """ValueError for a DocAddress whose doc id is >= the segment max_doc."""
+        from tantivy import DocAddress
+
+        searcher = fast_index.searcher()
+        bad = DocAddress(0, 10_000_000)
+        with pytest.raises(ValueError, match="Invalid doc_id"):
+            searcher.fast_field_values("score", [bad])
+
 
 class TestTermsWithPrefix:
     """Tests for Searcher.terms_with_prefix()."""

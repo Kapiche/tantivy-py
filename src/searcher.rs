@@ -715,13 +715,23 @@ impl Searcher {
         let segment_readers = self.inner.segment_readers();
         let num_segments = segment_readers.len();
 
-        // Validate all segment_ords before reading so we don't produce a
-        // partial result on error.
+        // Validate all addresses before reading so we don't produce a
+        // partial result on error. A DocId at or beyond a segment's max_doc
+        // can panic when reading a fast field column, so bounds-check both
+        // the segment ordinal and the local doc id up front.
         for doc_address in &doc_addresses {
-            if doc_address.segment_ord as usize >= num_segments {
+            let segment_ord = doc_address.segment_ord as usize;
+            if segment_ord >= num_segments {
                 return Err(PyValueError::new_err(format!(
                     "Invalid segment_ord: {}",
                     doc_address.segment_ord
+                )));
+            }
+            let max_doc = segment_readers[segment_ord].max_doc();
+            if doc_address.doc >= max_doc {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid doc_id: {} for segment_ord: {} (max_doc is {})",
+                    doc_address.doc, doc_address.segment_ord, max_doc
                 )));
             }
         }
