@@ -1011,6 +1011,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tantivy 0.26.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tantivy-common",
  "tantivy-tokenizers",
 ]
 

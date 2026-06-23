@@ -296,6 +296,15 @@ class Query:
     ) -> Query:
         pass
 
+    def and_must_match(self, *queries: Query) -> Query:
+        pass
+
+    def and_must_not_match(self, *queries: Query) -> Query:
+        pass
+
+    def or_should_match(self, *queries: Query) -> Query:
+        pass
+
     @staticmethod
     def disjunction_max_query(
         subqueries: Sequence[Query], tie_breaker: Optional[float] = None
@@ -349,8 +358,8 @@ class Query:
         schema: Schema,
         field_name: str,
         field_type: FieldType,
-        lower_bound: _RangeType,
-        upper_bound: _RangeType,
+        lower_bound: Optional[_RangeType] = None,
+        upper_bound: Optional[_RangeType] = None,
         include_lower: bool = True,
         include_upper: bool = True,
         use_inverted_index: bool = False,
@@ -405,8 +414,8 @@ class Searcher:
 
     def aggregate(
         self,
-        search_query: Query,
-        agg_query: dict,
+        query: Query,
+        agg: dict,
     ) -> dict:
         pass
 
@@ -421,8 +430,23 @@ class Searcher:
     def doc(self, doc_address: DocAddress) -> Document:
         pass
 
+    def fast_field_values(
+        self,
+        field_name: str,
+        doc_addresses: list[DocAddress],
+    ) -> list[int | float | bool | None]:
+        pass
+
     def doc_freq(self, field_name: str, field_value: Any) -> int:
         pass
+
+    def terms_with_prefix(
+        self,
+        field_name: str,
+        prefix: str,
+        filter_query: Query | None = None,
+        limit: int | None = None,
+    ) -> list[tuple[str, int]]: ...
 
     def cardinality(self, query: Query, field_name: str) -> float:
         pass
@@ -452,6 +476,9 @@ class IndexWriter:
         pass
 
     def delete_documents(self, field_name: str, field_value: Any) -> int:
+        """Deprecated alias of ``delete_documents_by_term``; emits a
+        ``DeprecationWarning``. Use ``delete_documents_by_term`` or
+        ``delete_documents_by_query`` instead."""
         pass
 
     def delete_documents_kapiche(self, field_name: str, field_value: Any) -> int:
@@ -504,6 +531,10 @@ class Index:
     def exists(path: str) -> bool:
         pass
 
+    @staticmethod
+    def is_compatible(path: str) -> bool:
+        pass
+
     @property
     def schema(self) -> Schema:
         pass
@@ -518,6 +549,7 @@ class Index:
         field_boosts: Optional[dict[str, float]] = None,
         fuzzy_fields: Optional[dict[str, tuple[bool, int, bool]]] = None,
         conjunction_by_default: bool = False,
+        allow_regexes: bool = False
     ) -> Query:
         pass
 
@@ -528,6 +560,7 @@ class Index:
         field_boosts: Optional[dict[str, float]] = None,
         fuzzy_fields: Optional[dict[str, tuple[bool, int, bool]]] = None,
         conjunction_by_default: bool = False,
+        allow_regexes: bool = False,
     ) -> tuple[Query, list[Any]]:
         pass
 

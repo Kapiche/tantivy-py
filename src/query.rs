@@ -49,6 +49,9 @@ impl Query {
         &self.inner
     }
 
+    // Arguments mirror tantivy's MoreLikeThisQuery builder options one-to-one;
+    // a config struct here would only duplicate that builder.
+    #[allow(clippy::too_many_arguments)]
     fn more_like_this_builder(
         min_doc_frequency: Option<u64>,
         max_doc_frequency: Option<u64>,
@@ -95,6 +98,78 @@ impl Query {
                 Ok((field, values.clone()))
             })
             .collect()
+    }
+
+    /// This is an internal helper method for the BooleanQuery
+    /// convenience methods (and_must_match, or_should_match, and_must_not_match).
+    /// It builds a new query in which each query in `others` is added as an
+    /// `other_occur` clause alongside `self`.
+    ///
+    /// When `self` is already a BooleanQuery, the new clauses are appended to
+    /// its clause list where doing so preserves matching semantics, so that
+    /// fluent chains stay flat instead of nesting one level per call:
+    ///
+    /// - Must/MustNot clauses can always be appended, provided the existing
+    ///   `minimum_number_should_match` is carried over. (Tantivy recomputes
+    ///   the minimum to 0 when a Must/MustNot clause is present, which would
+    ///   silently turn existing Should clauses from required-disjunction into
+    ///   optional scoring hints.)
+    /// - Should clauses can only be appended when the existing query is a
+    ///   plain disjunction: all clauses Should, with the default minimum of 1.
+    ///   In any other case, e.g. `a.and_must_match(b).or_should_match(c)`,
+    ///   appending would change which documents match.
+    ///
+    /// In all other cases `self` is nested as a single `self_occur` clause of
+    /// a new BooleanQuery.
+    fn combine_with(
+        &self,
+        others: Vec<Query>,
+        self_occur: tv::query::Occur,
+        other_occur: tv::query::Occur,
+    ) -> Query {
+        use tv::query::Occur;
+        type BooleanQuery = tv::query::BooleanQuery;
+
+        if others.is_empty() {
+            return self.clone();
+        }
+        let new_clauses =
+            others.into_iter().map(|query| (other_occur, query.inner));
+
+        if let Some(boolean_query) = self.inner.downcast_ref::<BooleanQuery>() {
+            let minimum = boolean_query.get_minimum_number_should_match();
+            let appendable = match other_occur {
+                Occur::Must | Occur::MustNot => true,
+                Occur::Should => {
+                    minimum == 1
+                        && boolean_query
+                            .clauses()
+                            .iter()
+                            .all(|(occur, _)| *occur == Occur::Should)
+                }
+            };
+            if appendable {
+                let mut subqueries = boolean_query
+                    .clauses()
+                    .iter()
+                    .map(|(occur, subquery)| (*occur, subquery.box_clone()))
+                    .collect::<Vec<_>>();
+                subqueries.extend(new_clauses);
+                return Query {
+                    inner: Box::new(
+                        BooleanQuery::with_minimum_required_clauses(
+                            subqueries, minimum,
+                        ),
+                    ),
+                };
+            }
+        }
+
+        let mut subqueries = vec![(self_occur, self.inner.box_clone())];
+        subqueries.extend(new_clauses);
+        Query {
+            inner: Box::new(BooleanQuery::new(subqueries)),
+        }
     }
 }
 
@@ -376,6 +451,54 @@ impl Query {
         })
     }
 
+    /// Convenience method to combine queries with AND (MUST) logic.
+    /// Returns a query matching documents that match this query and every
+    /// given query. Accepts any number of queries, so a list can be passed
+    /// with argument unpacking: `query.and_must_match(*queries)`.
+    #[pyo3(signature = (*queries))]
+    pub(crate) fn and_must_match(
+        &self,
+        queries: Vec<Query>,
+    ) -> PyResult<Query> {
+        Ok(self.combine_with(
+            queries,
+            tv::query::Occur::Must,
+            tv::query::Occur::Must,
+        ))
+    }
+
+    /// Convenience method to combine queries with AND NOT (MUST NOT) logic.
+    /// Returns a query matching documents that match this query and none of
+    /// the given queries. Accepts any number of queries, so a list can be
+    /// passed with argument unpacking: `query.and_must_not_match(*queries)`.
+    #[pyo3(signature = (*queries))]
+    pub(crate) fn and_must_not_match(
+        &self,
+        queries: Vec<Query>,
+    ) -> PyResult<Query> {
+        Ok(self.combine_with(
+            queries,
+            tv::query::Occur::Must,
+            tv::query::Occur::MustNot,
+        ))
+    }
+
+    /// Convenience method to combine queries with OR (SHOULD) logic.
+    /// Returns a query matching documents that match this query or any of
+    /// the given queries. Accepts any number of queries, so a list can be
+    /// passed with argument unpacking: `query.or_should_match(*queries)`.
+    #[pyo3(signature = (*queries))]
+    pub(crate) fn or_should_match(
+        &self,
+        queries: Vec<Query>,
+    ) -> PyResult<Query> {
+        Ok(self.combine_with(
+            queries,
+            tv::query::Occur::Should,
+            tv::query::Occur::Should,
+        ))
+    }
+
     /// Construct a Tantivy's DisjunctionMaxQuery
     #[staticmethod]
     #[pyo3(signature = (subqueries, tie_breaker=None))]
@@ -513,14 +636,33 @@ impl Query {
         })
     }
 
+    /// Construct a range query over a numeric, date, or IP address field.
+    ///
+    /// Pass `None` for `lower_bound` or `upper_bound` to leave that side unbounded.
+    /// Both bounds cannot be `None`; use `Query.all_query()` to match all documents.
+    /// Setting `include_lower` or `include_upper` to `False` while the corresponding
+    /// bound is `None` is an error—unbounded sides are always inclusive by definition.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema` - Schema of the target index.
+    /// * `field_name` - Field name to be searched.
+    /// * `field_type` - Type of the field (`FieldType.Integer`, `FieldType.Float`, `FieldType.Date`, etc.).
+    /// * `lower_bound` - Lower bound value, or `None` for unbounded.
+    /// * `upper_bound` - Upper bound value, or `None` for unbounded.
+    /// * `include_lower` - Whether the lower bound is inclusive. Ignored (and must be `True`) when `lower_bound` is `None`.
+    /// * `include_upper` - Whether the upper bound is inclusive. Ignored (and must be `True`) when `upper_bound` is `None`.
+    /// * `use_inverted_index` - If `True`, use an inverted index range query instead of a fast-field range query.
     #[staticmethod]
-    #[pyo3(signature = (schema, field_name, field_type, lower_bound, upper_bound, include_lower = true, include_upper = true, use_inverted_index = false))]
+    #[pyo3(signature = (schema, field_name, field_type, lower_bound=None, upper_bound=None, include_lower = true, include_upper = true, use_inverted_index = false))]
+    // Each argument is a distinct keyword in the exposed Python API.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn range_query(
         schema: &Schema,
         field_name: &str,
         field_type: FieldType,
-        lower_bound: &Bound<PyAny>,
-        upper_bound: &Bound<PyAny>,
+        lower_bound: Option<&Bound<PyAny>>,
+        upper_bound: Option<&Bound<PyAny>>,
         include_lower: bool,
         include_upper: bool,
         use_inverted_index: bool,
@@ -568,45 +710,72 @@ impl Query {
             )));
         }
 
-        let lower_bound_term = make_term_for_type(
-            &schema.inner,
-            field_name,
-            field_type.clone(),
-            lower_bound,
-        )?;
-        let upper_bound_term = make_term_for_type(
-            &schema.inner,
-            field_name,
-            field_type.clone(),
-            upper_bound,
-        )?;
+        if lower_bound.is_none() && upper_bound.is_none() {
+            // tv::query::RangeQuery::field() panics if both bounds are Unbounded,
+            // so we must reject this combination before constructing the query.
+            return Err(exceptions::PyValueError::new_err(
+                "At least one of lower_bound or upper_bound must be provided. \
+                 To match all documents, use Query.all_query() instead.",
+            ));
+        }
 
-        let lower_bound = if include_lower {
-            OpsBound::Included(lower_bound_term)
-        } else {
-            OpsBound::Excluded(lower_bound_term)
+        if lower_bound.is_none() && !include_lower {
+            return Err(exceptions::PyValueError::new_err(
+                "include_lower=False is invalid when lower_bound is None: \
+                 an unbounded side is always inclusive.",
+            ));
+        }
+
+        if upper_bound.is_none() && !include_upper {
+            return Err(exceptions::PyValueError::new_err(
+                "include_upper=False is invalid when upper_bound is None: \
+                 an unbounded side is always inclusive.",
+            ));
+        }
+
+        let lower_bound = match lower_bound {
+            None => OpsBound::Unbounded,
+            Some(lb) => {
+                let term = make_term_for_type(
+                    &schema.inner,
+                    field_name,
+                    field_type.clone(),
+                    lb,
+                )?;
+                if include_lower {
+                    OpsBound::Included(term)
+                } else {
+                    OpsBound::Excluded(term)
+                }
+            }
         };
 
-        let upper_bound = if include_upper {
-            OpsBound::Included(upper_bound_term)
-        } else {
-            OpsBound::Excluded(upper_bound_term)
+        let upper_bound = match upper_bound {
+            None => OpsBound::Unbounded,
+            Some(ub) => {
+                let term = make_term_for_type(
+                    &schema.inner,
+                    field_name,
+                    field_type.clone(),
+                    ub,
+                )?;
+                if include_upper {
+                    OpsBound::Included(term)
+                } else {
+                    OpsBound::Excluded(term)
+                }
+            }
         };
 
-        if use_inverted_index {
-            let inner = tv::query::InvertedIndexRangeQuery::new(
+        let inner: Box<dyn tv::query::Query> = if use_inverted_index {
+            Box::new(tv::query::InvertedIndexRangeQuery::new(
                 lower_bound,
                 upper_bound,
-            );
-            Ok(Query {
-                inner: Box::new(inner),
-            })
+            ))
         } else {
-            let inner = tv::query::RangeQuery::new(lower_bound, upper_bound);
-            Ok(Query {
-                inner: Box::new(inner),
-            })
-        }
+            Box::new(tv::query::RangeQuery::new(lower_bound, upper_bound))
+        };
+        Ok(Query { inner })
     }
 
     /// Explain how this query matches a given document.

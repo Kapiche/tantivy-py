@@ -4,16 +4,103 @@ use crate::{document::Document, query::Query, to_pyerr};
 use pyo3::types::PyDict;
 use pyo3::IntoPyObjectExt;
 use pyo3::{basic::CompareOp, exceptions::PyValueError, prelude::*};
+use pythonize::{depythonize, pythonize};
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use tantivy as tv;
 use tantivy::aggregation::AggregationCollector;
-use tantivy::collector::{Count, MultiCollector, TopDocs};
+use tantivy::collector::{
+    Collector, Count, MultiCollector, SegmentCollector, TopDocs,
+};
+use tantivy::schema::{IndexRecordOption, Type};
 use tantivy::TantivyDocument;
+use tantivy::{DocId, DocSet, Score, SegmentOrdinal, TERMINATED};
+use tantivy_common::BitSet;
 
 // Bring the trait into scope. This is required for the `to_named_doc` method.
 // However, tantivy-py declares its own `Document` class, so we need to avoid
 // introduce the `Document` trait into the namespace.
 use tantivy::Document as _;
+
+/// Returns the smallest byte string strictly greater than `prefix`.
+///
+/// Increments the last non-0xFF byte in place and truncates. Returns None
+/// if every byte is 0xFF (caller must fall back to a manual prefix check).
+fn next_prefix_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+    let mut bound = prefix.to_vec();
+    for i in (0..bound.len()).rev() {
+        if bound[i] < 0xFF {
+            bound[i] += 1;
+            bound.truncate(i + 1);
+            return Some(bound);
+        }
+    }
+    None
+}
+
+/// Private collector that gathers matching DocIds per segment as a BitSet.
+///
+/// Each segment's BitSet is sized to that segment's `max_doc()`, so total
+/// memory is ~1 bit per indexed document regardless of how many docs the
+/// query matches. `merge_fruits` places each segment's BitSet at index
+/// `segment_ord` so `terms_with_prefix` can look up visibility by segment
+/// index. Slots for segments that produced no fruit remain `None`.
+struct PerSegmentBitSetCollector {
+    num_segments: usize,
+}
+
+struct PerSegmentBitSetSegmentCollector {
+    segment_ord: u32,
+    docs: BitSet,
+}
+
+impl SegmentCollector for PerSegmentBitSetSegmentCollector {
+    type Fruit = (u32, BitSet);
+
+    fn collect(&mut self, doc: DocId, _score: Score) {
+        self.docs.insert(doc);
+    }
+
+    fn harvest(self) -> Self::Fruit {
+        (self.segment_ord, self.docs)
+    }
+}
+
+impl Collector for PerSegmentBitSetCollector {
+    type Fruit = Vec<Option<BitSet>>;
+    type Child = PerSegmentBitSetSegmentCollector;
+
+    fn for_segment(
+        &self,
+        segment_local_id: SegmentOrdinal,
+        reader: &tv::SegmentReader,
+    ) -> tv::Result<Self::Child> {
+        Ok(PerSegmentBitSetSegmentCollector {
+            segment_ord: segment_local_id,
+            docs: BitSet::with_max_value(reader.max_doc()),
+        })
+    }
+
+    fn requires_scoring(&self) -> bool {
+        false
+    }
+
+    fn merge_fruits(
+        &self,
+        segment_fruits: Vec<(u32, BitSet)>,
+    ) -> tv::Result<Vec<Option<BitSet>>> {
+        // None marks "no fruit for this segment". In practice tantivy calls
+        // for_segment for every segment, so every slot ends up as Some(_) —
+        // but a None default keeps merge_fruits robust to any future change.
+        let mut result: Vec<Option<BitSet>> =
+            (0..self.num_segments).map(|_| None).collect();
+        for (seg_ord, docs) in segment_fruits {
+            result[seg_ord as usize] = Some(docs);
+        }
+        Ok(result)
+    }
+}
 
 /// Tantivy's Searcher class
 ///
@@ -30,22 +117,74 @@ enum Fruit {
     #[pyo3(transparent)]
     Score(f32),
     #[pyo3(transparent)]
-    Order(u64),
+    OrderU64(Option<u64>),
     #[pyo3(transparent)]
-    OrderI64(i64),
+    OrderI64(Option<i64>),
     #[pyo3(transparent)]
-    OrderF64(f64),
+    OrderF64(Option<f64>),
+    #[pyo3(transparent)]
+    OrderBool(Option<bool>),
+    #[pyo3(transparent)]
+    OrderDate(Option<i64>),
+    #[pyo3(transparent)]
+    OrderStr(Option<String>),
 }
 
 impl std::fmt::Debug for Fruit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Fruit::Score(s) => f.write_str(&format!("{s}")),
-            Fruit::Order(o) => f.write_str(&format!("{o}")),
-            Fruit::OrderI64(o) => f.write_str(&format!("{o}")),
-            Fruit::OrderF64(o) => f.write_str(&format!("{o}")),
+            Fruit::Score(s) => write!(f, "{s}"),
+            Fruit::OrderU64(Some(v)) => write!(f, "{v}"),
+            Fruit::OrderU64(None) => f.write_str("None"),
+            Fruit::OrderI64(Some(v)) => write!(f, "{v}"),
+            Fruit::OrderI64(None) => f.write_str("None"),
+            Fruit::OrderF64(Some(v)) => write!(f, "{v}"),
+            Fruit::OrderF64(None) => f.write_str("None"),
+            Fruit::OrderBool(Some(v)) => write!(f, "{v}"),
+            Fruit::OrderBool(None) => f.write_str("None"),
+            Fruit::OrderDate(Some(v)) => write!(f, "{v}"),
+            Fruit::OrderDate(None) => f.write_str("None"),
+            Fruit::OrderStr(Some(v)) => write!(f, "{v}"),
+            Fruit::OrderStr(None) => f.write_str("None"),
         }
     }
+}
+
+/// Open one column per segment, map each DocAddress to its value, and wrap in
+/// the given `FastFieldValue` variant.  Used by `fast_field_values()` to avoid
+/// repeating the same iterator chain for each numeric type.
+macro_rules! read_fast_field_column_values {
+    ($readers:expr, $field:expr, $addrs:expr, $method:ident, $variant:path) => {{
+        let columns: Vec<Option<_>> = $readers
+            .iter()
+            .map(|reader| reader.fast_fields().$method($field).ok())
+            .collect();
+        Ok($addrs
+            .iter()
+            .map(|addr| {
+                columns[addr.segment_ord as usize]
+                    .as_ref()
+                    .and_then(|col| col.first(addr.doc))
+                    .map($variant)
+            })
+            .collect())
+    }};
+}
+
+/// A typed value read from a numeric fast field.
+///
+/// PyO3 converts U64/I64 to Python int and F64 to Python float, so Python
+/// callers receive `int | float` without needing to know the underlying type.
+#[derive(IntoPyObject)]
+enum FastFieldValue {
+    #[pyo3(transparent)]
+    U64(u64),
+    #[pyo3(transparent)]
+    I64(i64),
+    #[pyo3(transparent)]
+    F64(f64),
+    #[pyo3(transparent)]
+    Bool(bool),
 }
 
 #[pyclass(frozen, module = "tantivy.tantivy")]
@@ -68,6 +207,10 @@ impl From<Order> for tv::Order {
     }
 }
 
+/// A search hit as exposed to Python: the (score or sort key) object paired
+/// with the address of the matching document.
+type PyHit = (Py<PyAny>, DocAddress);
+
 #[pyclass(frozen, module = "tantivy.tantivy")]
 #[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
 /// Object holding a results successful search.
@@ -84,7 +227,7 @@ impl SearchResult {
     #[new]
     fn new(
         py: Python,
-        hits: Vec<(Py<PyAny>, DocAddress)>,
+        hits: Vec<PyHit>,
         count: Option<usize>,
     ) -> PyResult<Self> {
         let hits = hits
@@ -121,14 +264,14 @@ impl SearchResult {
     fn __getnewargs__(
         &self,
         py: Python,
-    ) -> PyResult<(Vec<(Py<PyAny>, DocAddress)>, Option<usize>)> {
+    ) -> PyResult<(Vec<PyHit>, Option<usize>)> {
         Ok((self.hits(py)?, self.count))
     }
 
     #[getter]
     /// The list of tuples that contains the scores and DocAddress of the
     /// search results.
-    fn hits(&self, py: Python) -> PyResult<Vec<(Py<PyAny>, DocAddress)>> {
+    fn hits(&self, py: Python) -> PyResult<Vec<PyHit>> {
         let ret = self
             .hits
             .iter()
@@ -137,6 +280,33 @@ impl SearchResult {
             })
             .collect::<PyResult<_>>()?;
         Ok(ret)
+    }
+}
+
+impl Searcher {
+    /// Execute an aggregation from an already-deserialized spec.
+    /// Shared by `aggregate()` and `cardinality()` so neither needs to
+    /// round-trip through JSON or Python when the spec is already a
+    /// `serde_json::Value`.
+    fn aggregate_value(
+        &self,
+        py: Python,
+        query: &Query,
+        aggs: tv::aggregation::agg_req::Aggregations,
+    ) -> PyResult<Py<PyDict>> {
+        let agg_res = py.detach(move || {
+            let agg_collector =
+                AggregationCollector::from_aggs(aggs, Default::default());
+            self.inner
+                .search(query.get(), &agg_collector)
+                .map_err(to_pyerr)
+        })?;
+
+        pythonize(py, &agg_res)
+            .map_err(to_pyerr)?
+            .downcast_into::<PyDict>()
+            .map(|d| d.unbind())
+            .map_err(Into::into)
     }
 }
 
@@ -150,24 +320,28 @@ impl Searcher {
     ///         return. Defaults to 10.
     ///     count (bool, optional): Should the number of documents that match
     ///         the query be returned as well. Defaults to true.
-    ///     order_by_field (Field, optional): A schema field that the results
+    ///     order_by_field (str, optional): Name of a field that the results
     ///         should be ordered by. The field must be declared as a fast field
-    ///         when building the schema. Note, this only works for unsigned
-    ///         fields.
-    ///     offset (Field, optional): The offset from which the results have
+    ///         when building the schema. Supported field types: Text, Unsigned,
+    ///         Integer, Float, Boolean and Date.
+    ///     offset (int, optional): The offset from which the results have
     ///         to be returned.
     ///     order (Order, optional): The order in which the results
     ///         should be sorted. If not specified, defaults to descending.
-    ///     weight_by_field (Field, optional): A schema field that the results
+    ///     weight_by_field (str, optional): Name of a field that the results
     ///         should be weighted by. The field must be declared as a fast
     ///         field when building the schema. Note, this only works for
-    ///         f64, i64 and u64 fields. The given field value is first
+    ///         Float, Integer and Unsigned fields. The given field value is first
     ///         transformed using the formula `log2(2.0 + value)` and then
     ///         multiplied with the original score. This means that a weight field
     ///         value of 0.0 results in no change to the original score.
     ///         If the weight value is negative, it is treated as 0.0.
     ///
-    /// Returns `SearchResult` object.
+    /// Returns `SearchResult` object whose `hits` is a list of `(order_key,
+    /// DocAddress)` tuples. When no `order_by_field` is given, `order_key` is
+    /// a float score. When ordering by a field, `order_key` matches the
+    /// field's Python type (int, float, bool, or str), except for date fields
+    /// which return an int of nanoseconds since the epoch.
     ///
     /// Raises a ValueError if there was an error with the search.
     #[pyo3(signature = (query, limit = 10, count = true, order_by_field = None, offset = 0, order = Order::Desc,
@@ -200,7 +374,7 @@ impl Searcher {
 
                     // Get field type from schema
                     let schema = self.inner.schema();
-                    let field = crate::get_field(&schema, &weight_by_field)
+                    let field = crate::get_field(schema, &weight_by_field)
                         .map_err(|e| PyValueError::new_err(e.to_string()))?;
                     let field_entry = schema.get_field_entry(field);
                     let field_type = field_entry.field_type().value_type();
@@ -292,77 +466,77 @@ impl Searcher {
                     let schema = self.inner.schema();
                     let field = crate::get_field(schema, order_by)
                         .map_err(|e| PyValueError::new_err(e.to_string()))?;
-                    let field_type = schema
-                        .get_field_entry(field)
-                        .field_type()
-                        .value_type();
-                    let tv_order: tv::Order = order.into();
-
+                    let field_type =
+                        schema.get_field_entry(field).field_type().value_type();
                     macro_rules! run_order_by_fast {
                         ($t:ty, $to_fruit:expr) => {{
-                            let typed_collector = collector
-                                .order_by_fast_field::<$t>(order_by, tv_order);
-                            let top_docs_handle =
-                                multicollector.add_collector(typed_collector);
-                            let ret = self
-                                .inner
-                                .search(query.get(), &multicollector);
+                            let top_docs_handle = multicollector.add_collector(
+                                collector.order_by_fast_field::<$t>(order_by, order.into()),
+                            );
+                            let ret =
+                                self.inner.search(query.get(), &multicollector);
                             match ret {
                                 Ok(mut r) => {
-                                    let top_docs =
-                                        top_docs_handle.extract(&mut r);
-                                    let result: Vec<(Fruit, DocAddress)> =
-                                        top_docs
-                                            .iter()
-                                            .map(|(f, d)| {
-                                                (
-                                                    $to_fruit(*f),
-                                                    DocAddress::from(d),
-                                                )
-                                            })
-                                            .collect();
+                                    let top_docs = top_docs_handle.extract(&mut r);
+                                    let result: Vec<(Fruit, DocAddress)> = top_docs
+                                        .into_iter()
+                                        .map(|(f, d)| {
+                                            (
+                                                $to_fruit(f),
+                                                DocAddress::from(&d),
+                                            )
+                                        })
+                                        .collect();
                                     (r, result)
                                 }
                                 Err(e) => {
-                                    return Err(PyValueError::new_err(
-                                        e.to_string(),
-                                    ))
+                                    return Err(PyValueError::new_err(e.to_string()))
                                 }
                             }
                         }};
                     }
-
                     match field_type {
-                        tv::schema::Type::U64 => {
-                            run_order_by_fast!(u64, |v: Option<u64>| {
-                                Fruit::Order(v.unwrap_or(0))
-                            })
-                        }
-                        tv::schema::Type::I64 => {
-                            run_order_by_fast!(i64, |v: Option<i64>| {
-                                Fruit::OrderI64(v.unwrap_or(0))
-                            })
-                        }
-                        tv::schema::Type::F64 => {
-                            run_order_by_fast!(f64, |v: Option<f64>| {
-                                Fruit::OrderF64(v.unwrap_or(0.0))
-                            })
-                        }
-                        tv::schema::Type::Date => {
-                            run_order_by_fast!(
-                                tv::DateTime,
-                                |v: Option<tv::DateTime>| {
-                                    Fruit::OrderI64(
-                                        v.map(|d| d.into_timestamp_micros())
-                                            .unwrap_or(0),
-                                    )
+                        tv::schema::Type::U64  => run_order_by_fast!(u64, Fruit::OrderU64),
+                        tv::schema::Type::I64  => run_order_by_fast!(i64, Fruit::OrderI64),
+                        tv::schema::Type::F64  => run_order_by_fast!(f64, Fruit::OrderF64),
+                        tv::schema::Type::Bool => run_order_by_fast!(bool, Fruit::OrderBool),
+                        tv::schema::Type::Date => run_order_by_fast!(
+                            tv::DateTime,
+                            |f: Option<tv::DateTime>| {
+                                Fruit::OrderDate(f.map(|dt| dt.into_timestamp_nanos()))
+                            }
+                        ),
+                        tv::schema::Type::Str  => {
+                            let top_docs_handle = multicollector.add_collector(
+                                collector.order_by_string_fast_field(order_by, order.into()),
+                            );
+                            let ret =
+                                self.inner.search(query.get(), &multicollector);
+                            match ret {
+                                Ok(mut r) => {
+                                    let top_docs = top_docs_handle.extract(&mut r);
+                                    let result: Vec<(Fruit, DocAddress)> = top_docs
+                                        .into_iter()
+                                        .map(|(f, d)| {
+                                            (
+                                                Fruit::OrderStr(f),
+                                                DocAddress::from(&d),
+                                            )
+                                        })
+                                        .collect();
+                                    (r, result)
                                 }
-                            )
+                                Err(e) => {
+                                    return Err(PyValueError::new_err(e.to_string()))
+                                }
+                            }
                         }
-                        _ => {
+                        other => {
                             return Err(PyValueError::new_err(format!(
-                                "Field '{order_by}' has unsupported type for ordering"
-                            )))
+                                "Field '{}' has type {:?}; order_by_field only supports \
+                                 Text, Unsigned, Integer, Float, Boolean and Date fast fields.",
+                                order_by, other
+                            )));
                         }
                     }
                 } else {
@@ -395,6 +569,13 @@ impl Searcher {
         })
     }
 
+    /// Execute an aggregation query and return the results as a dict.
+    ///
+    /// Args:
+    ///     query (Query): The query that filters the documents to aggregate over.
+    ///     agg (dict): The aggregation specification as a Python dict.
+    ///
+    /// Returns a dict containing the aggregation results.
     #[pyo3(signature = (query, agg))]
     fn aggregate(
         &self,
@@ -402,26 +583,9 @@ impl Searcher {
         query: &Query,
         agg: Py<PyDict>,
     ) -> PyResult<Py<PyDict>> {
-        let py_json = py.import("json")?;
-        let agg_query_str = py_json.call_method1("dumps", (agg,))?.to_string();
-
-        let agg_str = py.detach(move || {
-            let agg_collector = AggregationCollector::from_aggs(
-                serde_json::from_str(&agg_query_str).map_err(to_pyerr)?,
-                Default::default(),
-            );
-            let agg_res = self
-                .inner
-                .search(query.get(), &agg_collector)
-                .map_err(to_pyerr)?;
-
-            serde_json::to_string(&agg_res).map_err(to_pyerr)
-        })?;
-
-        let agg_dict = py_json.call_method1("loads", (agg_str,))?;
-        let agg_dict = agg_dict.downcast::<PyDict>()?;
-
-        Ok(agg_dict.clone().unbind())
+        let aggs: tv::aggregation::agg_req::Aggregations =
+            depythonize(agg.bind(py)).map_err(to_pyerr)?;
+        self.aggregate_value(py, query, aggs)
     }
 
     /// Returns the cardinality of a query.
@@ -438,20 +602,16 @@ impl Searcher {
         query: &Query,
         field_name: &str,
     ) -> PyResult<f64> {
-        let py_json = py.import("json")?;
-        let agg_query = serde_json::json!({
+        let agg_spec = serde_json::json!({
             "cardinality": {
                 "cardinality": {
                     "field": field_name,
                 }
             }
         });
-        let agg_query_str =
-            serde_json::to_string(&agg_query).map_err(to_pyerr)?;
-        let agg_query_dict: Py<PyDict> =
-            py_json.call_method1("loads", (agg_query_str,))?.extract()?;
 
-        let agg_res = self.aggregate(py, query, agg_query_dict)?;
+        let aggs = serde_json::from_value(agg_spec).map_err(to_pyerr)?;
+        let agg_res = self.aggregate_value(py, query, aggs)?;
         let agg_res: &Bound<PyDict> = agg_res.bind(py);
 
         let res = agg_res.get_item("cardinality")?.ok_or_else(|| {
@@ -461,9 +621,7 @@ impl Searcher {
         let value = res_dict.get_item("value")?.ok_or_else(|| {
             PyValueError::new_err("Unexpected aggregation result")
         })?;
-        let res = value.extract::<f64>()?;
-
-        Ok(res)
+        value.extract::<f64>()
     }
 
     /// Returns the overall number of documents in the index.
@@ -483,13 +641,14 @@ impl Searcher {
     #[pyo3(signature = (field_name, field_value))]
     fn doc_freq(
         &self,
+        py: Python,
         field_name: &str,
         field_value: &Bound<PyAny>,
     ) -> PyResult<u64> {
-        // Wrap the tantivy Searcher `doc_freq` method to return a PyResult.
+        // make_term() needs the GIL (Python type extraction); doc_freq() does not.
         let schema = self.inner.schema();
         let term = crate::make_term(schema, field_name, field_value)?;
-        self.inner.doc_freq(&term).map_err(to_pyerr)
+        py.detach(move || self.inner.doc_freq(&term).map_err(to_pyerr))
     }
 
     /// Fetches a document from Tantivy's store given a DocAddress.
@@ -499,12 +658,310 @@ impl Searcher {
     ///         the document that we wish to fetch.
     ///
     /// Returns the Document, raises ValueError if the document can't be found.
-    fn doc(&self, doc_address: &DocAddress) -> PyResult<Document> {
-        let doc: TantivyDocument =
-            self.inner.doc(doc_address.into()).map_err(to_pyerr)?;
-        let named_doc = doc.to_named_doc(self.inner.schema());
-        Ok(crate::document::Document {
-            field_values: named_doc.0,
+    fn doc(&self, py: Python, doc_address: &DocAddress) -> PyResult<Document> {
+        let addr: tv::DocAddress = doc_address.into();
+        py.detach(move || {
+            let doc: TantivyDocument =
+                self.inner.doc(addr).map_err(to_pyerr)?;
+            let named_doc = doc.to_named_doc(self.inner.schema());
+            Ok(crate::document::Document {
+                field_values: named_doc.0,
+            })
+        })
+    }
+
+    /// Read a numeric fast field for a batch of DocAddresses without fetching
+    /// stored documents.
+    ///
+    /// Fast fields are column-oriented and support O(1) random access by
+    /// segment-local DocId.  Use this instead of doc().to_dict()[field] when
+    /// you only need a single numeric field for many documents.
+    ///
+    /// The field type is resolved from the schema automatically: u64 and i64
+    /// fields return Python int; f64 fields return Python float; bool fields
+    /// return Python bool.
+    ///
+    /// Args:
+    ///     field_name: Name of a u64, i64, f64, or bool field declared with fast=True.
+    ///     doc_addresses: List of DocAddress objects (e.g. from search().hits).
+    ///
+    /// Returns:
+    ///     A list of values in the same order as doc_addresses.
+    ///     None is returned for any address where the column is absent
+    ///     (e.g. a segment written before the field was added to the schema).
+    ///
+    /// Raises:
+    ///     ValueError: if the field does not exist, is not a fast field, or
+    ///         has an unsupported type (only u64, i64, f64, and bool are supported).
+    #[pyo3(signature = (field_name, doc_addresses))]
+    fn fast_field_values(
+        &self,
+        field_name: &str,
+        doc_addresses: Vec<DocAddress>,
+    ) -> PyResult<Vec<Option<FastFieldValue>>> {
+        let schema = self.inner.schema();
+
+        let field = schema.get_field(field_name).map_err(|_| {
+            PyValueError::new_err(format!("Unknown field: '{field_name}'"))
+        })?;
+        let field_entry = schema.get_field_entry(field);
+        if !field_entry.is_fast() {
+            return Err(PyValueError::new_err(format!(
+                "Field '{field_name}' is not a fast field."
+            )));
+        }
+
+        let field_type = field_entry.field_type().value_type();
+        let segment_readers = self.inner.segment_readers();
+        let num_segments = segment_readers.len();
+
+        // Validate all addresses before reading so we don't produce a
+        // partial result on error. A DocId at or beyond a segment's max_doc
+        // can panic when reading a fast field column, so bounds-check both
+        // the segment ordinal and the local doc id up front.
+        for doc_address in &doc_addresses {
+            let segment_ord = doc_address.segment_ord as usize;
+            if segment_ord >= num_segments {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid segment_ord: {}",
+                    doc_address.segment_ord
+                )));
+            }
+            let max_doc = segment_readers[segment_ord].max_doc();
+            if doc_address.doc >= max_doc {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid doc_id: {} for segment_ord: {} (max_doc is {})",
+                    doc_address.doc, doc_address.segment_ord, max_doc
+                )));
+            }
+        }
+
+        // Pre-open one Column per segment so it is not reopened per document.
+        // Column::first() returns Option<T>, so no sentinel value is needed.
+        match field_type {
+            tv::schema::Type::U64 => read_fast_field_column_values!(
+                segment_readers,
+                field_name,
+                doc_addresses,
+                u64,
+                FastFieldValue::U64
+            ),
+            tv::schema::Type::I64 => read_fast_field_column_values!(
+                segment_readers,
+                field_name,
+                doc_addresses,
+                i64,
+                FastFieldValue::I64
+            ),
+            tv::schema::Type::F64 => read_fast_field_column_values!(
+                segment_readers,
+                field_name,
+                doc_addresses,
+                f64,
+                FastFieldValue::F64
+            ),
+            tv::schema::Type::Bool => read_fast_field_column_values!(
+                segment_readers,
+                field_name,
+                doc_addresses,
+                bool,
+                FastFieldValue::Bool
+            ),
+            _ => Err(PyValueError::new_err(format!(
+                "Field '{field_name}' has unsupported type for fast field access. \
+                 Only u64, i64, f64, and bool fast fields are supported."
+            ))),
+        }
+    }
+
+    /// Walk the term dictionary for `field_name` and return all terms that
+    /// begin with `prefix`, together with their document frequencies.
+    ///
+    /// Args:
+    ///     field_name: Name of an indexed text field in the schema.
+    ///     prefix: Only terms beginning with this string are returned.
+    ///         An empty string returns all terms in the field.
+    ///     filter_query: Optional Query. When provided, each term's count
+    ///         reflects only documents matched by the query (e.g. for
+    ///         permission filtering). Counts are still summed across segments.
+    ///     limit: If given, only the top-`limit` entries (by count) are returned.
+    ///
+    /// Returns:
+    ///     ``[(term, count), ...]`` sorted by count descending, then
+    ///     alphabetically. Terms present in multiple segments have their
+    ///     counts summed.
+    ///
+    /// Raises:
+    ///     ValueError: if the field does not exist or is not a text field.
+    #[pyo3(signature = (field_name, prefix, filter_query = None, limit = None))]
+    fn terms_with_prefix(
+        &self,
+        py: Python,
+        field_name: &str,
+        prefix: &str,
+        filter_query: Option<&Query>,
+        limit: Option<usize>,
+    ) -> PyResult<Vec<(String, u32)>> {
+        let schema = self.inner.schema();
+        let field = crate::get_field(schema, field_name)?;
+        if !matches!(
+            schema.get_field_entry(field).field_type().value_type(),
+            Type::Str
+        ) {
+            return Err(PyValueError::new_err(format!(
+                "Field '{field_name}' is not an indexed text field."
+            )));
+        }
+
+        let prefix_bytes = prefix.as_bytes().to_vec();
+        let upper_bound = next_prefix_bound(&prefix_bytes);
+        let num_segments = self.inner.segment_readers().len();
+        // When every byte of prefix is 0xFF no FST upper bound can be expressed;
+        // the inner loop falls back to a manual starts_with check.
+        let open_ended = upper_bound.is_none() && !prefix_bytes.is_empty();
+
+        py.detach(move || {
+            let filter_sets: Option<Vec<Option<BitSet>>> = filter_query
+                .map(|fq| {
+                    self.inner
+                        .search(
+                            fq.get(),
+                            &PerSegmentBitSetCollector { num_segments },
+                        )
+                        .map_err(to_pyerr)
+                })
+                .transpose()?;
+
+            if let Some(ref sets) = filter_sets {
+                if sets
+                    .iter()
+                    .all(|s| s.as_ref().is_none_or(|bs| bs.len() == 0))
+                {
+                    return Ok(vec![]);
+                }
+            }
+
+            let mut counts: HashMap<String, u32> = HashMap::new();
+
+            for (seg_ord, segment_reader) in
+                self.inner.segment_readers().iter().enumerate()
+            {
+                // Resolve this segment's filter once per segment, not per term.
+                // - None outer  → no filter at all; use term doc_freq below.
+                // - Some(None)  → segment produced no fruit; skip it entirely.
+                // - Some(Some(bs)) with len() == 0 → no docs match here; skip.
+                // - Some(Some(bs)) with len() > 0  → intersect postings against bs.
+                let segment_filter: Option<&BitSet> = match &filter_sets {
+                    None => None,
+                    Some(sets) => {
+                        debug_assert!(seg_ord < sets.len());
+                        match sets[seg_ord].as_ref() {
+                            Some(bs) if bs.len() > 0 => Some(bs),
+                            _ => continue,
+                        }
+                    }
+                };
+
+                let inv_index =
+                    segment_reader.inverted_index(field).map_err(to_pyerr)?;
+
+                let mut stream = {
+                    let mut builder =
+                        inv_index.terms().range().ge(prefix_bytes.as_slice());
+                    if let Some(ref ub) = upper_bound {
+                        builder = builder.lt(ub.as_slice());
+                    }
+                    builder.into_stream().map_err(to_pyerr)?
+                };
+
+                while stream.advance() {
+                    let key = stream.key();
+                    if open_ended && !key.starts_with(prefix_bytes.as_slice()) {
+                        break;
+                    }
+                    let Ok(term_str) = std::str::from_utf8(key) else {
+                        continue;
+                    };
+
+                    let count = match segment_filter {
+                        None => stream.value().doc_freq,
+                        Some(filter_set) => {
+                            let mut postings = inv_index
+                                .read_postings_from_terminfo(
+                                    stream.value(),
+                                    IndexRecordOption::Basic,
+                                )
+                                .map_err(to_pyerr)?;
+                            let mut c = 0u32;
+                            // SegmentPostings initialises at doc 0; read doc()
+                            // before the first advance().
+                            loop {
+                                let doc = postings.doc();
+                                if doc == TERMINATED {
+                                    break;
+                                }
+                                if filter_set.contains(doc) {
+                                    c += 1;
+                                }
+                                postings.advance();
+                            }
+                            c
+                        }
+                    };
+
+                    if count > 0 {
+                        *counts.entry(term_str.to_owned()).or_insert(0) +=
+                            count;
+                    }
+                }
+            }
+
+            let result: Vec<(String, u32)> = match limit {
+                None => {
+                    let mut pairs: Vec<(String, u32)> =
+                        counts.into_iter().collect();
+                    pairs.sort_by(|a, b| {
+                        b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+                    });
+                    pairs
+                }
+                Some(0) => Vec::new(),
+                Some(n) => {
+                    // Bounded min-heap of size n. The key (count, Reverse(term))
+                    // is constructed so "larger" means "more deserving" — higher
+                    // count, or on ties, lexicographically smaller term.
+                    // BinaryHeap is a max-heap, so wrapping in an outer Reverse
+                    // flips it to a min-heap whose peek() is the worst currently
+                    // kept entry — the candidate for eviction when a new term
+                    // outranks it.
+                    // Pop-then-push when full keeps the heap at exactly n
+                    // entries, so n is the precise capacity needed.
+                    let mut heap: BinaryHeap<Reverse<(u32, Reverse<String>)>> =
+                        BinaryHeap::with_capacity(n);
+                    for (term, count) in counts {
+                        let key = (count, Reverse(term));
+                        if heap.len() < n {
+                            heap.push(Reverse(key));
+                        } else if heap
+                            .peek()
+                            .is_some_and(|Reverse(worst)| &key > worst)
+                        {
+                            heap.pop();
+                            heap.push(Reverse(key));
+                        }
+                    }
+                    let mut top: Vec<(u32, Reverse<String>)> =
+                        heap.into_iter().map(|Reverse(k)| k).collect();
+                    // Heap order is unspecified; sort the survivors descending
+                    // (largest key first) for the documented output order.
+                    top.sort_by(|a, b| b.cmp(a));
+                    top.into_iter()
+                        .map(|(count, Reverse(term))| (term, count))
+                        .collect()
+                }
+            };
+
+            Ok(result)
         })
     }
 
