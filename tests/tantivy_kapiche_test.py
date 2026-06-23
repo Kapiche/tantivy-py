@@ -527,7 +527,9 @@ class TestDocument(object):
 
         date = datetime.datetime(2019, 8, 12, 13, 0, 0)
         doc = tantivy.Document(name="Bill", date=date)
-        assert doc["date"][0] == date
+        # Naive datetimes are now interpreted and returned as UTC-aware
+        # following the add_date tzinfo fix (upstream #666).
+        assert doc["date"][0] == date.replace(tzinfo=datetime.timezone.utc)
 
     def test_document_repr(self):
         doc = tantivy.Document(name="Bill", reference=[1, 2])
