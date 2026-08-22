@@ -74,7 +74,11 @@ jobs:
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
         with:
           disable-sudo: true
-          egress-policy: block
+          # Block mode only on Linux. Since harden-runner v2.20.0, block mode
+          # also applies to macOS and Windows runners, where normal OS
+          # background traffic (Apple services, Windows telemetry, OCSP/CRL)
+          # is blocked and reported as anomalous. Those calls are not ours.
+          egress-policy: ${{ matrix.os == 'ubuntu-latest' && 'block' || 'audit' }}
           allowed-endpoints: >
             api.github.com:443
             crates.io:443
