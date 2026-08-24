@@ -14,6 +14,9 @@ crate-type = ["cdylib"]
 pyo3-build-config = "0.29.0"
 
 [dependencies]
+# Must match the base64 version tantivy uses, because
+# tantivy::query::QueryParserError::ExpectedBase64 exposes base64::DecodeError
+# in its public API. tantivy 0.26 depends on base64 0.22, so 0.23 will not build.
 base64 = "0.22"
 chrono = "0.4.45"
 tantivy = "0.26.0"
