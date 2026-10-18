@@ -752,9 +752,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.29.3"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b3fc0c4d08f6bb10e71fe39dfb9e2f59c6eb6854e22ec8092f50c69a4499adb"
+checksum = "70130e2b6dd1ee589a8788026a429561ca5c40fa7a2fa7914c2282eddae24700"
 dependencies = [
  "target-lexicon",
 ]
@@ -1017,7 +1017,7 @@ dependencies = [
  "futures",
  "itertools 0.15.0",
  "pyo3",
- "pyo3-build-config 0.29.3",
+ "pyo3-build-config 0.30.1",
  "pythonize",
  "serde",
  "serde_json",
