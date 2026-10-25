@@ -1022,7 +1022,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tantivy 0.26.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "tantivy-common",
+ "tantivy-common 0.27.0",
  "tantivy-tokenizers",
 ]
 
@@ -1066,7 +1066,7 @@ dependencies = [
  "smallvec",
  "tantivy-bitpacker",
  "tantivy-columnar",
- "tantivy-common",
+ "tantivy-common 0.11.0",
  "tantivy-fst",
  "tantivy-query-grammar",
  "tantivy-stacker",
@@ -1099,7 +1099,7 @@ dependencies = [
  "itertools 0.14.0",
  "serde",
  "tantivy-bitpacker",
- "tantivy-common",
+ "tantivy-common 0.11.0",
  "tantivy-sstable",
  "tantivy-stacker",
 ]
@@ -1109,6 +1109,19 @@ name = "tantivy-common"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbf10915aa75da3c3b0d58b58853d2e889efbaf32d4982a4c3715dde6bba23e5"
+dependencies = [
+ "async-trait",
+ "byteorder",
+ "ownedbytes",
+ "serde",
+ "time",
+]
+
+[[package]]
+name = "tantivy-common"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66d062ce97f2a26f2a7b2ed5d926a62241f762e4395ac110eb5c18f3b4a13b71"
 dependencies = [
  "async-trait",
  "byteorder",
@@ -1148,7 +1161,7 @@ dependencies = [
  "futures-util",
  "itertools 0.14.0",
  "tantivy-bitpacker",
- "tantivy-common",
+ "tantivy-common 0.11.0",
  "tantivy-fst",
  "zstd",
 ]
@@ -1160,7 +1173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6cbb051742da9d53ca9e8fff43a9b10e319338b24e2c0e15d0372df19ffeb951"
 dependencies = [
  "murmurhash32",
- "tantivy-common",
+ "tantivy-common 0.11.0",
 ]
 
 [[package]]
