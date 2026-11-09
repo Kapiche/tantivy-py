@@ -5,7 +5,7 @@ use pyo3::{exceptions, prelude::*};
 use crate::schema::Schema;
 use std::sync::{Arc, RwLock};
 use tantivy::schema::{
-    self, BytesOptions, DateOptions, IpAddrOptions, INDEXED,
+    self, BytesOptions, DateOptions, IpAddrOptions, JsonObjectOptions, INDEXED,
 };
 
 /// Tantivy has a very strict schema.
@@ -23,13 +23,12 @@ use tantivy::schema::{
 ///     >>> body = builder.add_text_field("body")
 ///
 ///     >>> schema = builder.build()
-#[pyclass(module = "tantivy.tantivy")]
+#[pyclass(skip_from_py_object, module = "tantivy.tantivy")]
 #[derive(Clone)]
 pub(crate) struct SchemaBuilder {
     pub(crate) builder: Arc<RwLock<Option<schema::SchemaBuilder>>>,
 }
 
-const NO_TOKENIZER_NAME: &str = "raw";
 const TOKENIZER: &str = "default";
 const RECORD: &str = "position";
 
@@ -136,6 +135,31 @@ impl SchemaBuilder {
 
         if let Some(builder) = builder.write().unwrap().as_mut() {
             builder.add_i64_field(name, opts);
+        } else {
+            return Err(exceptions::PyValueError::new_err(
+                "Schema builder object isn't valid anymore.",
+            ));
+        }
+        Ok(self.clone())
+    }
+
+    /// Add a generated tie-breaker field to the schema.
+    ///
+    /// tantivy fills the field itself: it is an integer fast field whose
+    /// values are consecutive within a segment, start at a random offset and
+    /// are kept across merges. Segments may overlap, so values are almost
+    /// always distinct but not guaranteed to be unique. Use it to order hits
+    /// that would otherwise tie, e.g. `order_by_field`. It is not stored, and
+    /// values supplied for it in documents are ignored.
+    ///
+    /// Args:
+    ///     name (str): The name of the field.
+    ///
+    /// Returns the associated field handle.
+    /// Raises a ValueError if there was an error with the field creation.
+    fn add_tie_breaker_field(&mut self, name: &str) -> PyResult<Self> {
+        if let Some(builder) = self.builder.write().unwrap().as_mut() {
+            builder.add_tie_breaker_field(name);
         } else {
             return Err(exceptions::PyValueError::new_err(
                 "Schema builder object isn't valid anymore.",
@@ -325,6 +349,13 @@ impl SchemaBuilder {
     ///         document id and the term frequency, while the 'position' option
     ///         records the document id, term frequency and the positions of
     ///         the term occurrences in the document.
+    ///     expand_dots_enabled (bool, optional): If true, a "." in a JSON
+    ///         object key is treated as a path separator, the same as a "."
+    ///         between keys in a query string or in `field_name` passed to
+    ///         `Query.term_query`. E.g. `{"a.b": "hello"}` is then indexed as
+    ///         if it was `{"a": {"b": "hello"}}`, reachable via `attrs.a.b`
+    ///         instead of the default `attrs.a\.b` escaped form. Defaults to
+    ///         False.
     ///
     /// Returns the associated field handle.
     /// Raises a ValueError if there was an error with the field creation.
@@ -333,7 +364,8 @@ impl SchemaBuilder {
         stored = false,
         fast = false,
         tokenizer_name = TOKENIZER,
-        index_option = RECORD
+        index_option = RECORD,
+        expand_dots_enabled = false
     ))]
     fn add_json_field(
         &mut self,
@@ -342,17 +374,23 @@ impl SchemaBuilder {
         fast: bool,
         tokenizer_name: &str,
         index_option: &str,
+        expand_dots_enabled: bool,
     ) -> PyResult<Self> {
         let builder = &mut self.builder;
-        let options = SchemaBuilder::build_text_option(
+        let text_options = SchemaBuilder::build_text_option(
             stored,
             fast,
             tokenizer_name,
             index_option,
         )?;
 
+        let mut json_options: JsonObjectOptions = text_options.into();
+        if expand_dots_enabled {
+            json_options = json_options.set_expand_dots_enabled();
+        }
+
         if let Some(builder) = builder.write().unwrap().as_mut() {
-            builder.add_json_field(name, options);
+            builder.add_json_field(name, json_options);
         } else {
             return Err(exceptions::PyValueError::new_err(
                 "Schema builder object isn't valid anymore.",
@@ -531,12 +569,7 @@ impl SchemaBuilder {
         };
 
         let options = if fast {
-            let text_tokenizer = if tokenizer_name != NO_TOKENIZER_NAME {
-                Some(tokenizer_name)
-            } else {
-                None
-            };
-            options.set_fast(text_tokenizer)
+            options.set_fast(tokenizer_name)
         } else {
             options
         };

@@ -1,6 +1,8 @@
 use pyo3::{exceptions::PyValueError, prelude::*};
 use tantivy::tokenizer as tvt;
 
+use crate::pre_tokenized::PreTokenizedString;
+
 /// All Tantivy's built-in tokenizers in one place.
 /// Each static method, e.g. Tokenizer.simple(),
 /// creates a wrapper around a Tantivy tokenizer.
@@ -105,7 +107,7 @@ impl Tokenizer {
 
 /// All Tantivy's builtin TokenFilters.
 ///
-/// ## Exmaple
+/// ## Example
 ///
 /// ```python
 /// filter = Filter.alpha_num()
@@ -181,10 +183,12 @@ impl Filter {
     /// Args:
     /// - language (string): Stop words list language.
     ///   Valid values: {
-    ///     "arabic", "danish", "dutch", "english", "finnish", "french", "german", "greek",
-    ///     "hungarian", "italian", "norwegian", "portuguese", "romanian", "russian",
-    ///     "spanish", "swedish", "tamil", "turkish"
+    ///     "danish", "dutch", "english", "finnish", "french", "german", "hungarian",
+    ///     "italian", "norwegian", "portuguese", "russian", "spanish", "swedish"
     ///   }
+    ///
+    /// Adding this filter to a builder raises ValueError for any other language,
+    /// including stemmer languages without a builtin stop word list.
     // ## Implementation notes:
     // An enum would make more sense for `language`, but I'm not sure if it's worth it.
     #[staticmethod]
@@ -258,7 +262,7 @@ fn parse_language(lang: &str) -> Result<tvt::Language, String> {
 /// Do not instantiate this class directly.
 /// Use the `TextAnalyzerBuilder` class instead.
 #[derive(Clone)]
-#[pyclass(module = "tantivy.tantivy")]
+#[pyclass(from_py_object, module = "tantivy.tantivy")]
 pub(crate) struct TextAnalyzer {
     pub(crate) analyzer: tvt::TextAnalyzer,
 }
@@ -307,6 +311,25 @@ impl TextAnalyzer {
                 count += 1;
             }
             count
+        }
+    }
+
+    /// Tokenize a string and return a PreTokenizedString object.
+    /// Args:
+    /// - text (string): text to tokenize.
+    /// Returns:
+    /// - PreTokenizedString: a tokenized string.
+    fn pre_tokenize(&mut self, text: &str) -> PreTokenizedString {
+        let mut token_stream = self.analyzer.token_stream(text);
+        let mut tokens = Vec::new();
+
+        token_stream.process(&mut |token| tokens.push(token.clone()));
+
+        PreTokenizedString {
+            inner: tvt::PreTokenizedString {
+                text: text.to_owned(),
+                tokens,
+            },
         }
     }
 }
@@ -413,17 +436,17 @@ impl TextAnalyzerBuilder {
                     }
                 }
                 Filter::_StopWord { language } => {
-                    match parse_language(language) {
-                        Ok(lang) => builder.filter_dynamic(
-                            tvt::StopWordFilter::new(lang).unwrap(),
-                        ),
-                        Err(e) => {
-                            return Err(PyErr::new::<
-                                pyo3::exceptions::PyValueError,
-                                _,
-                            >(e))
-                        }
-                    }
+                    let lang = parse_language(language)
+                        .map_err(PyValueError::new_err)?;
+                    // Not every stemmer language has a builtin stop word list
+                    let stop_words = tvt::StopWordFilter::new(lang)
+                        .ok_or_else(|| {
+                            PyValueError::new_err(format!(
+                                "No builtin stop word list for language: {}",
+                                language
+                            ))
+                        })?;
+                    builder.filter_dynamic(stop_words)
                 }
                 Filter::_CustomStopWord { stopwords } => builder
                     .filter_dynamic(tvt::StopWordFilter::remove(

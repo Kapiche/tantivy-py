@@ -4,6 +4,7 @@
 use itertools::Itertools;
 use pyo3::{
     basic::CompareOp,
+    exceptions::{PyOverflowError, PyTypeError},
     prelude::*,
     types::{
         PyAny, PyBool, PyDateTime, PyDict, PyInt, PyList, PyTuple, PyTzInfo,
@@ -16,7 +17,9 @@ use chrono::{DateTime as ChronoDateTime, NaiveDateTime, Utc};
 
 use tantivy::{self as tv, schema::document::OwnedValue as Value};
 
-use crate::{facet::Facet, schema::Schema, to_pyerr};
+use crate::{
+    facet::Facet, pre_tokenized::PreTokenizedString, schema::Schema, to_pyerr,
+};
 use serde::{
     ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer,
 };
@@ -39,11 +42,42 @@ use std::{
 /// `DateTime<Utc>` only accepts inputs whose tzinfo *is* `datetime.timezone.utc`
 /// — a `zoneinfo.ZoneInfo("UTC")` or any non-UTC tz fails. Normalizing in
 /// Python first sidesteps both restrictions.
-fn pydatetime_to_tv(any: &Bound<PyAny>) -> PyResult<tv::DateTime> {
-    let dt = any.downcast::<PyDateTime>()?;
+///
+/// Values outside the range tantivy can store raise a `ValueError` naming the
+/// value and the range; `field_name`, when given, prefixes that message.
+pub(crate) fn pydatetime_to_tv(
+    any: &Bound<PyAny>,
+    field_name: Option<&str>,
+) -> PyResult<tv::DateTime> {
+    let dt = any.cast::<PyDateTime>()?;
+    let out_of_range = || {
+        let (min, max) = datetime_bounds();
+        let prefix = field_name
+            .map(|name| format!("field {name}: "))
+            .unwrap_or_default();
+        let value = any
+            .call_method0("isoformat")
+            .and_then(|s| s.extract::<String>())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        to_pyerr(format!(
+            "{prefix}datetime {value} is out of range; dates must be between {} and {} (UTC)",
+            format_bound(min),
+            format_bound(max),
+        ))
+    };
     let nanos = if dt.get_tzinfo().is_some() {
         let utc_tz = PyTzInfo::utc(dt.py())?;
-        let utc_dt = dt.call_method1("astimezone", (utc_tz,))?;
+        // Converting an offset-aware value near year 1 or 9999 to UTC can
+        // overflow inside Python before tantivy's own range is checked.
+        let utc_dt = dt.call_method1("astimezone", (utc_tz,)).map_err(|e| {
+            if e.is_instance_of::<PyOverflowError>(dt.py()) {
+                let err = out_of_range();
+                err.set_cause(dt.py(), Some(e));
+                err
+            } else {
+                e
+            }
+        })?;
         utc_dt
             .extract::<ChronoDateTime<Utc>>()?
             .timestamp_nanos_opt()
@@ -52,8 +86,30 @@ fn pydatetime_to_tv(any: &Bound<PyAny>) -> PyResult<tv::DateTime> {
             .and_utc()
             .timestamp_nanos_opt()
     }
-    .ok_or_else(|| to_pyerr("datetime out of representable range"))?;
+    .ok_or_else(out_of_range)?;
     Ok(tv::DateTime::from_timestamp_nanos(nanos))
+}
+
+/// The earliest and latest instants tantivy can store, narrowed to the
+/// microsecond precision of Python's `datetime` so that both are accepted by
+/// `pydatetime_to_tv`: the minimum rounds up and the maximum rounds down.
+pub(crate) fn datetime_bounds() -> (ChronoDateTime<Utc>, ChronoDateTime<Utc>) {
+    let min_nanos = tv::DateTime::MIN.into_timestamp_nanos();
+    let max_nanos = tv::DateTime::MAX.into_timestamp_nanos();
+    let min_micros =
+        min_nanos.div_euclid(1000) + i64::from(min_nanos.rem_euclid(1000) != 0);
+    let max_micros = max_nanos.div_euclid(1000);
+    (
+        ChronoDateTime::<Utc>::from_timestamp_micros(min_micros)
+            .expect("tantivy minimum fits in chrono"),
+        ChronoDateTime::<Utc>::from_timestamp_micros(max_micros)
+            .expect("tantivy maximum fits in chrono"),
+    )
+}
+
+/// Format a bound like Python's `datetime.isoformat()` for an aware UTC value.
+fn format_bound(dt: ChronoDateTime<Utc>) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
 }
 
 /// Convert a tantivy `DateTime` to a tz-aware UTC Python `datetime`.
@@ -61,6 +117,11 @@ fn tv_to_pydatetime(py: Python, dt: tv::DateTime) -> PyResult<Py<PyAny>> {
     ChronoDateTime::<Utc>::from_timestamp_nanos(dt.into_timestamp_nanos())
         .into_py_any(py)
 }
+
+/// A JSON object. Convert it to a `Value` with `Value::from`, which indexes
+/// RFC3339 strings as dates, the same as tantivy. Do not deserialize JSON
+/// directly into `Value`, because that indexes date strings as text.
+type JsonMap = serde_json::Map<String, serde_json::Value>;
 
 pub(crate) fn extract_value(any: &Bound<PyAny>) -> PyResult<Value> {
     if let Ok(s) = any.extract::<String>() {
@@ -75,8 +136,8 @@ pub(crate) fn extract_value(any: &Bound<PyAny>) -> PyResult<Value> {
     if let Ok(num) = any.extract::<f64>() {
         return Ok(Value::F64(num));
     }
-    if any.downcast::<PyDateTime>().is_ok() {
-        return Ok(Value::Date(pydatetime_to_tv(any)?));
+    if any.cast::<PyDateTime>().is_ok() {
+        return Ok(Value::Date(pydatetime_to_tv(any, None)?));
     }
     if let Ok(facet) = any.extract::<Facet>() {
         return Ok(Value::Facet(facet.inner));
@@ -84,11 +145,9 @@ pub(crate) fn extract_value(any: &Bound<PyAny>) -> PyResult<Value> {
     if let Ok(b) = any.extract::<Vec<u8>>() {
         return Ok(Value::Bytes(b));
     }
-    if let Ok(dict) = any.downcast::<PyDict>() {
-        if let Ok(json_dict) =
-            pythonize::depythonize::<BTreeMap<String, Value>>(dict.as_ref())
-        {
-            return Ok(Value::Object(json_dict.into_iter().collect()));
+    if let Ok(dict) = any.cast::<PyDict>() {
+        if let Ok(json_map) = pythonize::depythonize::<JsonMap>(dict.as_ref()) {
+            return Ok(Value::from(json_map));
         } else {
             return Err(to_pyerr(
                 "Invalid JSON object. Expected valid JSON string or Dict[str, Any].",
@@ -139,13 +198,20 @@ pub(crate) fn extract_value_for_type(
                 .map_err(to_pyerr_for_type("F64", field_name, any))?,
         ),
         tv::schema::Type::Date => Value::Date(
-            pydatetime_to_tv(any)
-                .map_err(to_pyerr_for_type("DateTime", field_name, any))?,
+            pydatetime_to_tv(any, Some(field_name)).map_err(|e| {
+                if e.is_instance_of::<PyTypeError>(any.py()) {
+                    to_pyerr_for_type("DateTime", field_name, any)(e)
+                } else {
+                    e
+                }
+            })?,
         ),
         tv::schema::Type::Facet => Value::Facet(
-            any.extract::<Facet>()
+            any.cast::<Facet>()
                 .map_err(to_pyerr_for_type("Facet", field_name, any))?
-                .inner,
+                .borrow()
+                .inner
+                .clone(),
         ),
         tv::schema::Type::Bytes => Value::Bytes(
             any.extract::<Vec<u8>>()
@@ -153,20 +219,15 @@ pub(crate) fn extract_value_for_type(
         ),
         tv::schema::Type::Json => {
             if let Ok(json_str) = any.extract::<&str>() {
-                return serde_json::from_str::<BTreeMap<String, Value>>(
-                    json_str,
-                )
-                .map(|json_map| Value::Object(json_map.into_iter().collect()))
-                .map_err(to_pyerr_for_type("Json", field_name, any));
+                return serde_json::from_str::<JsonMap>(json_str)
+                    .map(Value::from)
+                    .map_err(to_pyerr_for_type("Json", field_name, any));
             }
 
             let dict = any
-                .downcast::<PyDict>()
+                .cast::<PyDict>()
                 .map_err(to_pyerr_for_type("Json", field_name, any))?;
-            let map = pythonize::depythonize::<BTreeMap<String, Value>>(
-                dict.as_ref(),
-            )?;
-            Value::Object(map.into_iter().collect())
+            Value::from(pythonize::depythonize::<JsonMap>(dict.as_ref())?)
         }
         tv::schema::Type::IpAddr => {
             let val = any
@@ -181,13 +242,18 @@ pub(crate) fn extract_value_for_type(
                 .map(Value::IpAddr)
                 .map_err(to_pyerr_for_type("IpAddr", field_name, any))?
         }
+        tv::schema::Type::Custom => {
+            return Err(to_pyerr(format!(
+                "Field {field_name} has a custom (segment plugin) type, which tantivy-py cannot write"
+            )))
+        }
     };
 
     Ok(value)
 }
 
 fn extract_value_single_or_list(any: &Bound<PyAny>) -> PyResult<Vec<Value>> {
-    if let Ok(values) = any.downcast::<PyList>() {
+    if let Ok(values) = any.cast::<PyList>() {
         values.iter().map(|v| extract_value(&v)).collect()
     } else {
         Ok(vec![extract_value(any)?])
@@ -200,7 +266,7 @@ fn extract_value_single_or_list_for_type(
     field_name: &str,
 ) -> PyResult<Vec<Value>> {
     // Check if a numeric fast field supports multivalues.
-    if let Ok(values) = any.downcast::<PyList>() {
+    if let Ok(values) = any.cast::<PyList>() {
         // Process an array of integers as a single entry if it is a bytes field.
         if field_type.value_type() == tv::schema::Type::Bytes
             && values
@@ -250,10 +316,10 @@ fn value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
         Value::I64(num) => (*num).into_py_any(py)?,
         Value::F64(num) => (*num).into_py_any(py)?,
         Value::Bytes(b) => b.into_py_any(py)?,
-        Value::PreTokStr(_pretoken) => {
-            // TODO implement me
-            unimplemented!();
+        Value::PreTokStr(pretoken) => PreTokenizedString {
+            inner: pretoken.clone(),
         }
+        .into_py_any(py)?,
         Value::Date(d) => tv_to_pydatetime(py, *d)?,
         Value::Facet(f) => Facet { inner: f.clone() }.into_py_any(py)?,
         Value::Array(arr) => {
@@ -272,6 +338,7 @@ fn value_to_py(py: Python, value: &Value) -> PyResult<Py<PyAny>> {
         Value::Object(obj) => object_to_py(py, obj)?,
         Value::Bool(b) => b.into_py_any(py)?,
         Value::IpAddr(i) => (*i).to_string().into_py_any(py)?,
+        Value::Custom(bytes) => bytes.into_py_any(py)?,
     })
 }
 
@@ -298,6 +365,7 @@ fn value_to_string(value: &Value) -> String {
         }
         Value::Bool(b) => format!("{b}"),
         Value::IpAddr(i) => format!("{}", *i),
+        Value::Custom(bytes) => format!("{bytes:?}"),
     }
 }
 
@@ -418,6 +486,8 @@ enum SerdeValue {
     Object(Vec<(String, Value)>),
     /// IpV6 Address. Internally there is no IpV4, it needs to be converted to `Ipv6Addr`.
     IpAddr(Ipv6Addr),
+    /// Opaque bytes of a segment plugin's custom field type.
+    Custom(Vec<u8>),
 }
 
 impl From<SerdeValue> for Value {
@@ -436,6 +506,7 @@ impl From<SerdeValue> for Value {
             SerdeValue::Object(v) => Self::Object(v),
             SerdeValue::Bool(v) => Self::Bool(v),
             SerdeValue::IpAddr(v) => Self::IpAddr(v),
+            SerdeValue::Custom(v) => Self::Custom(v),
         }
     }
 }
@@ -456,6 +527,7 @@ impl From<Value> for SerdeValue {
             Value::Object(v) => Self::Object(v),
             Value::Bool(v) => Self::Bool(v),
             Value::IpAddr(v) => Self::IpAddr(v),
+            Value::Custom(v) => Self::Custom(v),
         }
     }
 }
@@ -491,6 +563,8 @@ enum BorrowedSerdeValue<'a> {
     Object(&'a Vec<(String, Value)>),
     /// IpV6 Address. Internally there is no IpV4, it needs to be converted to `Ipv6Addr`.
     IpAddr(&'a Ipv6Addr),
+    /// Opaque bytes of a segment plugin's custom field type.
+    Custom(&'a [u8]),
 }
 
 impl<'a> From<&'a Value> for BorrowedSerdeValue<'a> {
@@ -509,6 +583,7 @@ impl<'a> From<&'a Value> for BorrowedSerdeValue<'a> {
             Value::Object(v) => Self::Object(v),
             Value::Bool(v) => Self::Bool(v),
             Value::IpAddr(v) => Self::IpAddr(v),
+            Value::Custom(v) => Self::Custom(v),
         }
     }
 }
@@ -519,6 +594,7 @@ impl<'a> From<&'a Value> for BorrowedSerdeValue<'a> {
 /// (field_name, value). In this list, one field may appear more than once.
 ///
 /// Example:
+///
 ///     >>> doc = tantivy.Document()
 ///     >>> doc.add_text("title", "The Old Man and the Sea")
 ///     >>> doc.add_text("body", ("He was an old man who fished alone in a "
@@ -531,12 +607,14 @@ impl<'a> From<&'a Value> for BorrowedSerdeValue<'a> {
 /// values directly as constructor arguments.
 ///
 /// Example:
+///
 ///     >>> doc = tantivy.Document(title=["The Old Man and the Sea"], body=["..."])
 ///
 /// As syntactic sugar, tantivy also allows the user to pass a single values
 /// if there is only one. In other words, the following is also legal.
 ///
 /// Example:
+///
 ///     >>> doc = tantivy.Document(title="The Old Man and the Sea", body="...")
 ///
 /// For numeric fields, the [`Document`] constructor does not have any
@@ -546,6 +624,7 @@ impl<'a> From<&'a Value> for BorrowedSerdeValue<'a> {
 /// explicit type information.
 ///
 /// Example:
+///
 ///     >>> schema = (
 ///     ...     SchemaBuilder()
 ///     ...         .add_unsigned_field("unsigned")
@@ -557,7 +636,7 @@ impl<'a> From<&'a Value> for BorrowedSerdeValue<'a> {
 ///     ...     {"unsigned": 1000, "signed": -5, "float": 0.4},
 ///     ...     schema,
 ///     ... )
-#[pyclass(module = "tantivy.tantivy")]
+#[pyclass(skip_from_py_object, module = "tantivy.tantivy")]
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct Document {
     pub(crate) field_values: BTreeMap<String, Vec<Value>>,
@@ -692,6 +771,21 @@ impl Document {
         self.add_value(field_name, text);
     }
 
+    /// Add a pre-tokenized text field.
+    ///
+    /// Args:
+    ///     field_name (str): The field name for which we are adding the pre-tokenized text.
+    ///     value (PreTokenizedString): The pre-tokenized text that will be added to the document.
+    ///         If the tokenization of the pre-tokenized text don't align with the registered tokenizer, some functionality may not work as expected,
+    ///         like the query parser or the SnippetGenerator.
+    fn add_pre_tokenized_text(
+        &mut self,
+        field_name: String,
+        pre_tokenized_text: &PreTokenizedString,
+    ) {
+        self.add_value(field_name, pre_tokenized_text.inner.clone());
+    }
+
     /// Add an unsigned integer value to the document.
     ///
     /// Args:
@@ -733,12 +827,16 @@ impl Document {
     /// Args:
     ///     field_name (str): The field name for which we are adding the date.
     ///     value (datetime): The date that will be added to the document.
+    ///         Naive values are treated as UTC. Values must fall between
+    ///         `tantivy.MIN_DATETIME` and `tantivy.MAX_DATETIME`
+    ///         (roughly the years 1677 to 2262); otherwise a `ValueError`
+    ///         is raised.
     fn add_date(
         &mut self,
         field_name: String,
         value: &Bound<PyDateTime>,
     ) -> PyResult<()> {
-        let dt = pydatetime_to_tv(value.as_any())?;
+        let dt = pydatetime_to_tv(value.as_any(), None)?;
         self.add_value(field_name, dt);
         Ok(())
     }
@@ -773,8 +871,6 @@ impl Document {
         field_name: String,
         value: &Bound<PyAny>,
     ) -> PyResult<()> {
-        type JsonMap = serde_json::Map<String, serde_json::Value>;
-
         if let Ok(json_str) = value.extract::<&str>() {
             let json_map: JsonMap =
                 serde_json::from_str(json_str).map_err(to_pyerr)?;
@@ -927,7 +1023,7 @@ impl Document {
         // out_field_values.reserve(py_dict.len());
 
         for key_value_any in py_dict.items() {
-            if let Ok(key_value) = key_value_any.downcast::<PyTuple>() {
+            if let Ok(key_value) = key_value_any.cast::<PyTuple>() {
                 if key_value.len() != 2 {
                     continue;
                 }
@@ -978,7 +1074,7 @@ impl Document {
         let mut field_values = BTreeMap::new();
 
         for key_value_any in py_dict.items() {
-            let key_value = key_value_any.downcast::<PyTuple>()?;
+            let key_value = key_value_any.cast::<PyTuple>()?;
             if key_value.len() != 2 {
                 continue;
             }

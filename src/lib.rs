@@ -8,6 +8,7 @@ mod facet;
 mod index;
 mod more_collectors;
 mod parser_error;
+mod pre_tokenized;
 mod query;
 mod query_grammar;
 mod schema;
@@ -17,10 +18,11 @@ mod searcher_frame_document;
 mod snippet;
 mod tokenizer;
 
-use document::{extract_value_for_type, Document};
+use document::{extract_value, extract_value_for_type, Document};
 use explanation::Explanation;
 use facet::Facet;
 use index::{Index, IndexWriter};
+use pre_tokenized::{PreTokenizedString, Token};
 use query::{Occur, Query};
 use query_grammar::{parse_query, parse_query_lenient};
 use schema::{FieldType, Schema};
@@ -45,12 +47,9 @@ use tokenizer::{Filter, TextAnalyzer, TextAnalyzerBuilder, Tokenizer};
 /// Example:
 ///     >>> import json
 ///     >>> import tantivy
-///
 ///     >>> builder = tantivy.SchemaBuilder()
-///
 ///     >>> title = builder.add_text_field("title", stored=True)
 ///     >>> body = builder.add_text_field("body")
-///
 ///     >>> schema = builder.build()
 ///     >>> index = tantivy.Index(schema)
 ///     >>> doc = tantivy.Document()
@@ -58,9 +57,7 @@ use tokenizer::{Filter, TextAnalyzer, TextAnalyzerBuilder, Tokenizer};
 ///     >>> doc.add_text(body, ("He was an old man who fished alone in a "
 ///                             "skiff in the Gulf Stream and he had gone "
 ///                             "eighty-four days now without taking a fish."))
-///
 ///     >>> writer.add_document(doc)
-///
 ///     >>> doc = schema.parse_document(json.dumps({
 ///            "title": ["Frankenstein", "The Modern Prometheus"],
 ///            "body": ("You will rejoice to hear that no disaster has "
@@ -70,17 +67,12 @@ use tokenizer::{Filter, TextAnalyzer, TextAnalyzerBuilder, Tokenizer};
 ///                     "assure my dear sister of my welfare and increasing "
 ///                     "confidence in the success of my undertaking.")
 ///     }))
-///
 ///     >>> writer.add_document(doc)
 ///     >>> writer.commit()
-///
 ///     >>> reader = index.reader()
 ///     >>> searcher = reader.searcher()
-///
 ///     >>> query = index.parse_query("sea whale", [title, body])
-///
 ///     >>> result = searcher.search(query, 10)
-///
 ///     >>> assert len(result) == 1
 ///
 #[pymodule]
@@ -105,6 +97,8 @@ fn tantivy(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<TextAnalyzerBuilder>()?;
     m.add_class::<Filter>()?;
     m.add_class::<TextAnalyzer>()?;
+    m.add_class::<Token>()?;
+    m.add_class::<PreTokenizedString>()?;
 
     m.add_function(wrap_pyfunction!(parse_query, m)?)?;
     m.add_function(wrap_pyfunction!(parse_query_lenient, m)?)?;
@@ -118,6 +112,10 @@ fn tantivy(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_wrapped(wrap_pymodule!(query_parser_error))?;
 
     m.add("__version__", tv::version_string())?;
+
+    let (min_datetime, max_datetime) = document::datetime_bounds();
+    m.add("MIN_DATETIME", min_datetime)?;
+    m.add("MAX_DATETIME", max_datetime)?;
 
     Ok(())
 }
@@ -186,12 +184,50 @@ pub(crate) fn get_field(
     Ok(field)
 }
 
+/// Like `make_term`, but for text-only operations (phrase words and fuzzy
+/// queries). On a JSON subpath the value must be a `str`, as on a plain text
+/// field: any other Python type would produce a typed term, which has no
+/// positions (phrases) and no text to fuzz, so the query would silently match
+/// nothing.
+pub(crate) fn make_text_term(
+    schema: &tv::schema::Schema,
+    field_name: &str,
+    field_value: &Bound<PyAny>,
+) -> PyResult<tv::Term> {
+    if let Some((_, json_path)) = schema.find_field(field_name) {
+        if !json_path.is_empty()
+            && !field_value.is_instance_of::<pyo3::types::PyString>()
+        {
+            return Err(exceptions::PyValueError::new_err(format!(
+                "Expected Str type for JSON path `{field_name}`, got `{field_value}`."
+            )));
+        }
+    }
+    make_term(schema, field_name, field_value)
+}
+
 pub(crate) fn make_term(
     schema: &tv::schema::Schema,
     field_name: &str,
     field_value: &Bound<PyAny>,
 ) -> PyResult<tv::Term> {
-    let field = get_field(schema, field_name)?;
+    let (field, json_path) =
+        schema.find_field(field_name).ok_or_else(|| {
+            exceptions::PyValueError::new_err(format!(
+                "Field `{field_name}` is not defined in the schema."
+            ))
+        })?;
+
+    if !json_path.is_empty() {
+        return make_json_path_term(
+            schema,
+            field,
+            field_name,
+            json_path,
+            field_value,
+        );
+    }
+
     // Look up the actual field type from the schema so that Python integers
     // are extracted as the correct numeric type (u64 vs i64).  The generic
     // extract_value() path always infers integers as i64 because Python ints
@@ -214,6 +250,102 @@ pub(crate) fn make_term(
             )))
         }
     };
+
+    Ok(term)
+}
+
+/// Builds a `Term` addressing a JSON subpath, e.g. `field_name` = `"notes.user"`
+/// resolving to the `notes` field with `json_path` `"user"`.
+///
+/// A JSON field has no single declared value type, so unlike the plain-field
+/// path in `make_term`, the Python value is read with its own type
+/// (`extract_value`) rather than coerced to a schema-declared one: the Python
+/// type alone decides the term type. A `str` is always the literal string (it
+/// is never reinterpreted as a number, bool or date), so `"5"` addresses a
+/// string leaf and `5` an integer leaf. Numeric handling follows tantivy's
+/// JSON indexing path (`index_json_value` in `json_utils.rs`): a float that is
+/// a whole number is normalized to the same int representation the JSON
+/// indexer would have stored it as, and a non-finite float is rejected.
+fn make_json_path_term(
+    schema: &tv::schema::Schema,
+    field: tv::schema::Field,
+    field_name: &str,
+    json_path: &str,
+    field_value: &Bound<PyAny>,
+) -> PyResult<tv::Term> {
+    let json_options = match schema.get_field_entry(field).field_type() {
+        tv::schema::FieldType::JsonObject(json_options) => json_options,
+        _ => {
+            return Err(exceptions::PyValueError::new_err(format!(
+                "Field `{}` is not a JSON field.",
+                schema.get_field_name(field)
+            )))
+        }
+    };
+
+    let mut term = Term::from_field_json_path(
+        field,
+        json_path,
+        json_options.is_expand_dots_enabled(),
+    );
+
+    let value = if field_value.is_instance_of::<pyo3::types::PyInt>()
+        && !field_value.is_instance_of::<pyo3::types::PyBool>()
+        && field_value.extract::<i64>().is_err()
+    {
+        // extract_value() only ever produces Value::I64 for Python ints (it
+        // tries i64, then falls through to f64), which silently loses
+        // precision for ints between i64::MAX and u64::MAX -- the JSON
+        // indexer itself stores such a value as u64. Intercept that one case
+        // before generic extraction. An int outside both ranges is rejected
+        // rather than handed to extract_value(), which would round it to an
+        // f64 and could match a different indexed integer.
+        match field_value.extract::<u64>() {
+            Ok(num) => Value::U64(num),
+            Err(_) => {
+                return Err(exceptions::PyValueError::new_err(format!(
+                    "Integer value `{field_value}` for field `{field_name}` is outside the supported range [-9223372036854775808, 18446744073709551615]."
+                )));
+            }
+        }
+    } else {
+        extract_value(field_value)?
+    };
+    match value {
+        Value::Str(text) => term.append_type_and_str(&text),
+        Value::U64(num) => term.append_type_and_fast_value(num),
+        Value::Bool(b) => term.append_type_and_fast_value(b),
+        Value::I64(num) => term.append_type_and_fast_value(num),
+        Value::F64(num) => {
+            // The JSON indexer never writes a term for a non-finite float
+            // (`json_utils.rs`'s leaf indexing silently drops it), so a term
+            // built from one here could never match anything indexed.
+            if !num.is_finite() {
+                return Err(exceptions::PyValueError::new_err(format!(
+                    "Can't create a term for Field `{field_name}` with non-finite value `{field_value}`."
+                )));
+            }
+            match tv::columnar::NumericalValue::F64(num).normalize() {
+                tv::columnar::NumericalValue::I64(v) => {
+                    term.append_type_and_fast_value(v)
+                }
+                tv::columnar::NumericalValue::U64(v) => {
+                    term.append_type_and_fast_value(v)
+                }
+                tv::columnar::NumericalValue::F64(v) => {
+                    term.append_type_and_fast_value(v)
+                }
+            }
+        }
+        Value::Date(d) => {
+            term.append_type_and_fast_value(d.truncate(tv::schema::DATE_TIME_PRECISION_INDEXED))
+        }
+        _ => {
+            return Err(exceptions::PyValueError::new_err(format!(
+                "Can't create a term for Field `{field_name}` with value `{field_value}`."
+            )))
+        }
+    }
 
     Ok(term)
 }

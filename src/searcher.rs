@@ -187,7 +187,7 @@ enum FastFieldValue {
     Bool(bool),
 }
 
-#[pyclass(frozen, module = "tantivy.tantivy")]
+#[pyclass(from_py_object, frozen, module = "tantivy.tantivy")]
 #[derive(Clone, Copy, Deserialize, PartialEq, Serialize)]
 /// Enum representing the direction in which something should be sorted.
 pub(crate) enum Order {
@@ -211,7 +211,7 @@ impl From<Order> for tv::Order {
 /// with the address of the matching document.
 type PyHit = (Py<PyAny>, DocAddress);
 
-#[pyclass(frozen, module = "tantivy.tantivy")]
+#[pyclass(skip_from_py_object, frozen, module = "tantivy.tantivy")]
 #[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
 /// Object holding a results successful search.
 pub(crate) struct SearchResult {
@@ -304,7 +304,7 @@ impl Searcher {
 
         pythonize(py, &agg_res)
             .map_err(to_pyerr)?
-            .downcast_into::<PyDict>()
+            .cast_into::<PyDict>()
             .map(|d| d.unbind())
             .map_err(Into::into)
     }
@@ -617,7 +617,7 @@ impl Searcher {
         let res = agg_res.get_item("cardinality")?.ok_or_else(|| {
             PyValueError::new_err("Unexpected aggregation result")
         })?;
-        let res_dict: &Bound<PyDict> = res.downcast()?;
+        let res_dict: &Bound<PyDict> = res.cast()?;
         let value = res_dict.get_item("value")?.ok_or_else(|| {
             PyValueError::new_err("Unexpected aggregation result")
         })?;
@@ -638,6 +638,9 @@ impl Searcher {
 
     /// Return the overall number of documents containing
     /// the given term.
+    ///
+    /// `field_name` accepts a JSON subpath the same way `Query.term_query`
+    /// does, e.g. `"attrs.user"`.
     #[pyo3(signature = (field_name, field_value))]
     fn doc_freq(
         &self,
@@ -980,7 +983,7 @@ impl Searcher {
 /// It consists in an id identifying its segment, and its segment-local DocId.
 /// The id used for the segment is actually an ordinal in the list of segment
 /// hold by a Searcher.
-#[pyclass(frozen, module = "tantivy.tantivy")]
+#[pyclass(from_py_object, frozen, module = "tantivy.tantivy")]
 #[derive(
     Clone, Debug, Deserialize, PartialEq, PartialOrd, Eq, Ord, Serialize,
 )]
