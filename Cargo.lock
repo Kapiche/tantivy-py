@@ -1191,7 +1191,7 @@ dependencies = [
 [[package]]
 name = "tantivy-tokenizers"
 version = "0.27.0"
-source = "git+https://github.com/Kapiche/tantivy-tokenizers?rev=3bc2ce3d1cccc31afe9c1bc63e521aa67815ed0e#3bc2ce3d1cccc31afe9c1bc63e521aa67815ed0e"
+source = "git+https://github.com/Kapiche/tantivy-tokenizers?tag=v0.27.0#3bc2ce3d1cccc31afe9c1bc63e521aa67815ed0e"
 dependencies = [
  "tantivy 0.27.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicode-properties",
