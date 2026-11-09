@@ -31,7 +31,7 @@ env:
 jobs:
   build-sdist:
     name: Build sdist
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     # The from-sdist build compiles the extension cold. This is the path any platform
@@ -107,7 +107,7 @@ jobs:
 
   build-wheel:
     name: Wheels - ${{ matrix.platform }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 45
@@ -181,7 +181,7 @@ jobs:
 
   macos:
     name: Wheels - macos-${{ matrix.target }}
-    runs-on: macos-26
+    runs-on: macos-latest
     permissions:
       contents: read
     timeout-minutes: 45
@@ -253,8 +253,8 @@ jobs:
         # that matches its tags. The wheels are abi3, so every Python version installs
         # the same artifact: running each one proves that artifact on each interpreter.
         runner:
-          - ubuntu-24.04       # manylinux x86_64
-          - macos-26           # macOS arm64 (universal2)
+          - ubuntu-latest      # manylinux x86_64
+          - macos-latest       # macOS arm64 (universal2)
           - macos-15-intel     # macOS x86_64
         python-version: ['3.11', '3.12', '3.13', '3.14']
     defaults:
@@ -327,7 +327,7 @@ jobs:
   python-release-github:
     name: Attach wheels to the GitHub release
     if: github.event_name == 'release'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [ test-wheel, build-sdist ]
     permissions:
       contents: write # To add assets to a release.
@@ -360,7 +360,7 @@ jobs:
     name: Release
     # Kapiche fork: never publish to PyPI; wheels go to the GitHub release only.
     if: github.event_name == 'release' && github.repository_owner == 'quickwit-oss'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [ test-wheel, build-sdist ]
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
