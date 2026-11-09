@@ -184,6 +184,46 @@ complex_query = Query.boolean_query(
 
 <!--TODO: Update the reference link to the query parser docs when available.-->
 
+## Querying JSON fields programmatically
+
+`Query.term_query` (and `term_set_query`, `fuzzy_term_query`, `phrase_query`,
+`phrase_prefix_query`, `Searcher.doc_freq`) accept a JSON subpath as `field_name`, the same paths
+`index.parse_query()` understands:
+
+```python
+from tantivy import SchemaBuilder, Index, Query, Document
+
+json_schema = SchemaBuilder().add_json_field("attrs", stored=True).build()
+json_index = Index(json_schema)
+json_writer = json_index.writer()
+json_doc = Document()
+json_doc.add_json("attrs", {"user": "alice", "count": 5})
+json_writer.add_document(json_doc)
+json_writer.commit()
+json_index.reload()
+
+json_query = Query.term_query(json_schema, "attrs.user", "alice")
+json_result = json_index.searcher().search(json_query, 10)
+assert len(json_result.hits) == 1
+```
+
+A field literally named `"attrs.user"` always takes precedence over the
+subpath interpretation. A path given for a field that isn't JSON, or a root
+that doesn't resolve to any field, raises `ValueError`.
+
+The Python type of the value decides the term type. A `str` is always the
+literal string: `"5"` matches a string leaf `"5"`, while the integer leaf `5`
+is matched by passing `5`. `bool`, `float` and `datetime` match their typed
+leaves. `phrase_query`, `phrase_prefix_query` and `fuzzy_term_query` only work
+on text, so they require `str` values on a JSON subpath: `phrase_query` and
+`phrase_prefix_query` raise `ValueError` for anything else, and
+`fuzzy_term_query` raises `TypeError`, since its `text` argument is a `str`.
+
+Values are not tokenized. The default tokenizer lowercases indexed text, so
+`Query.term_query(json_schema, "attrs.user", "Alice")` finds nothing; pass
+`"alice"`. Use `index.parse_query()` if you want the query parser to tokenize
+for you.
+
 ## Combining Queries with the Boolean Helper Methods
 
 `Query.boolean_query(...)` shown above is the most general way to combine
@@ -357,6 +397,17 @@ assert fragment[first_highlight.start:first_highlight.end] == "days"
 > fragment is a substring and the offsets will only be correct against
 > `fragment()`.
 
+`fragment_range()` says where the fragment sits in the text the snippet was
+generated from (the field's values joined by a single space). Add its
+`start` to a highlight's offsets to locate the highlight in that text. Like
+`highlighted()`, the offsets are UTF-8 byte offsets, so they match Python
+string indices only for ASCII text:
+
+```python
+fragment_range = snippet.fragment_range()
+assert hit_text[fragment_range.start:fragment_range.end] == fragment
+```
+
 The snippet object can also generate a marked-up HTML snippet:
 
 ```python
@@ -366,6 +417,43 @@ assert html_snippet == (
     "Gulf Stream and he had gone eighty-four <b>days</b> now "
     "without taking a <b>fish</b>"
 )
+```
+
+
+## Sorting the documents in an index
+
+An index can store its documents sorted by a fast field, so that document
+ids follow that field's order. Pass `sort_by_field` (and optionally
+`sort_order`) when creating the index. The field must be a single-valued fast
+field of type int, unsigned, float, date, text or bytes. The setting applies
+only when the index is created; opening an existing index keeps its own
+sorting.
+
+```python
+import tantivy
+
+sorted_schema = (
+    tantivy.SchemaBuilder()
+    .add_unsigned_field("year", stored=True, fast=True)
+    .build()
+)
+sorted_index = tantivy.Index(
+    sorted_schema, sort_by_field="year", sort_order=tantivy.Order.Desc
+)
+sorted_writer = sorted_index.writer(num_threads=1)
+for year in [1952, 1937, 1961]:
+    book = tantivy.Document()
+    book.add_unsigned("year", year)
+    sorted_writer.add_document(book)
+sorted_writer.commit()
+sorted_index.reload()
+
+sorted_searcher = sorted_index.searcher()
+years = [
+    sorted_searcher.doc(tantivy.DocAddress(0, doc_id))["year"][0]
+    for doc_id in range(sorted_searcher.num_docs)
+]
+assert years == [1961, 1952, 1937]
 ```
 
 
@@ -428,6 +516,17 @@ by passing some text to its `.analyze()` method.
 my_analyzer.analyze('www.this1website1might1exist.com')
 ```
 
+The `.analyze()` method doesn't return the token's boundary. We can get them with the `.pre_tokenize()` method. This method returns a `PreTokenizedString` objekt.
+A `PreTokenizedString` can be added to a `Document` later with the `.add_pre_tokenized_text()` method.
+```python
+# Will print: [
+# Token(text='this', position=1, char_offset_from=4, char_offset_to=8), 
+# Token(text='website', position=2, char_offset_from=9, char_offset_to=16), 
+# ...]
+tokenized = my_analyzer.pre_tokenize('www.this1website1might1exist.com')
+tokenized.tokens
+```
+
 The next step is to register our analyzer with an index. Let's
 assume we already have one.
 
@@ -450,12 +549,26 @@ schema = (
 index = Index(schema)
 ```
 
-Summary:
+With fast fields, the text analyzer should be registered with the index's `.register_fast_field_tokenizer()` method. 
+Fast fields are Tantivy's column-oriented storage, and are designed for fast random access of some document fields given a document id. The registry for fast field text analyzers are separate from the registry of other fields. 
+Continuing the example, if the "content" field is declared as fast field in our schema, then the analyzer must be registered as a fast field tokenizer, too.
 
-1. Use `TextAnalyzerBuilder`, `Tokenizer`, and `Filter` to build a `TextAnalyzer`
-2. The analyzer's `.analyze()` method lets you use your analyzer as a tokenizer from Python.
-3. Refer to your analyzer's name when building the index schema.
-4. Use the same name when registering your analyzer on the index.
+```python
+schema = (  
+    tantivy.SchemaBuilder()  
+    .add_text_field("content", fast=True, tokenizer_name="custom_analyzer")  
+    .build()  
+)  
+index = Index(schema)
+index.register_fast_field_tokenizer("custom_analyzer", my_analyzer)  
+```
+
+!!! abstract "Summary"
+
+    1. Use `TextAnalyzerBuilder`, `Tokenizer`, and `Filter` to build a `TextAnalyzer`
+    2. The analyzer's `.analyze()` and `.pre_tokenize()` method lets you use your analyzer as a tokenizer from Python.
+    3. Refer to your analyzer's name when building the index schema.
+    4. Use the same name when registering your analyzer on the index with `.register_tokenizer()` or `.register_fast_field_tokenizer()`.
 
 
 ### On terminology: Tokenizer vs. Text Analyzer
@@ -486,7 +599,8 @@ serves to register a *text analyzer*.
 ## How to use aggregations
 
 Aggregations summarize your data as metrics, statistics, or other analytics.
-Tantivy-py supports a subset of the aggregations available in Tantivy.
+`Searcher.cardinality` is a shortcut for one aggregation, and
+`Searcher.aggregate` runs any aggregation tantivy supports.
 
 ### Cardinality Aggregation
 
@@ -525,4 +639,49 @@ query = tantivy.Query.all_query()
 cardinality = searcher.cardinality(query, "rating")
 
 assert cardinality == 2.0
+```
+
+### Aggregation requests
+
+`Searcher.aggregate` takes an aggregation request as a dict, in tantivy's
+Elasticsearch-compatible format, and returns the result as a dict. Any
+aggregation tantivy supports can be used, for example `multi_terms`, which
+buckets documents by a combination of fields, or `sum` with
+`none_if_no_match`, which returns `None` instead of `0.0` when no document
+matches:
+
+```python
+import tantivy
+
+schema = (
+    tantivy.SchemaBuilder()
+    .add_text_field("genre", fast=True, tokenizer_name="raw")
+    .add_unsigned_field("year", fast=True)
+    .add_float_field("price", fast=True)
+    .build()
+)
+index = tantivy.Index(schema)
+with index.writer() as writer:
+    for genre, year, price in [("novel", 1952, 9.5), ("novel", 1952, 12.0), ("poetry", 1961, 7.0)]:
+        book = tantivy.Document(genre=genre, price=price)
+        book.add_unsigned("year", year)
+        writer.add_document(book)
+index.reload()
+searcher = index.searcher()
+
+by_genre_and_year = searcher.aggregate(
+    tantivy.Query.all_query(),
+    {"pairs": {"multi_terms": {"terms": [{"field": "genre"}, {"field": "year"}]}}},
+)
+counts = {
+    tuple(bucket["key"]): bucket["doc_count"]
+    for bucket in by_genre_and_year["pairs"]["buckets"]
+}
+assert counts == {("novel", 1952): 2, ("poetry", 1961): 1}
+
+no_match = searcher.aggregate(
+    index.parse_query("genre:drama"),
+    {"revenue": {"sum": {"field": "price", "none_if_no_match": True}}},
+)
+assert no_match["revenue"]["value"] is None
 ```

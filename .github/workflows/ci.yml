@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   Lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
@@ -46,27 +46,24 @@ jobs:
       UNSAFE_PYO3_SKIP_VERSION_CHECK: ${{ matrix.unsafe-pyo3-skip-version-check }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-26, windows-2025]
         python-version: ["3.12"]
         allow-prereleases: [false]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python-version: "3.14t"
             allow-prereleases: false
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python-version: "3.14"
             allow-prereleases: false
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python-version: "3.13"
             allow-prereleases: false
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python-version: "3.12"
             allow-prereleases: false
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python-version: "3.11"
-            allow-prereleases: false
-          - os: ubuntu-latest
-            python-version: "3.10"
             allow-prereleases: false
     runs-on: "${{ matrix.os }}"
     steps:

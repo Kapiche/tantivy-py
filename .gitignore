@@ -2,18 +2,18 @@
 **/*.pyc
 build
 /target
-/tantivy-query-grammar/target
-/tantivy-query-grammar/Cargo.lock
 **/*.rs.bk
 dist/
 __pycache__/
 tantivy.so
 tantivy.dylib
 tantivy/tantivy.cpython*.so
+tantivy/tantivy.abi3.so
 tantivy.egg-info/
 .venv
 .envrc
 site/
+uv.lock
 
 /.claude
 .vscode/

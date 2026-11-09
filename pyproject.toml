@@ -4,9 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "tantivy"
-version = "0.26.0"
+version = "0.27.0"
 description = "Official Python bindings for the Tantivy search engine"
-requires-python = ">=3.10"
+readme = "README.md"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -16,11 +17,15 @@ authors = [
 ]
 optional-dependencies = { dev = ["nox"] }
 
+[project.urls]
+Homepage = "https://github.com/quickwit-oss/tantivy-py"
+Repository = "https://github.com/quickwit-oss/tantivy-py"
+Documentation = "https://tantivy-py.readthedocs.io/en/latest/"
+Issues = "https://github.com/quickwit-oss/tantivy-py/issues"
+Changelog = "https://github.com/quickwit-oss/tantivy-py/releases"
+
 [tool.maturin]
 bindings = "pyo3"
-include = [
-    { path = "tantivy-query-grammar/**/*", format = "sdist" },
-]
 
 [tool.pytest.ini_options]
 # Set the durations option and doctest modules

@@ -13,3 +13,13 @@ updates:
   directory: "/"
   schedule:
     interval: "weekly"
+  cooldown:
+    default-days: 7
+    semver-major-days: 14
+  groups:
+    cargo:
+      patterns:
+      - "*"
+      update-types:
+      - "minor"
+      - "patch"

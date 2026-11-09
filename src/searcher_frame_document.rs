@@ -199,7 +199,7 @@ impl StatSearcher {
 /// It consists in an id identifying its segment, and its segment-local DocId.
 /// The id used for the segment is actually an ordinal in the list of segment
 /// hold by a Searcher.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub(crate) struct DocAddress {
     pub(crate) segment_ord: tv::SegmentOrdinal,
